@@ -995,7 +995,7 @@ psnavi_read_usb_interrupt_pipe(
 	interrupt_transfer.timeout = INTERRUPT_TRANSFER_TIMEOUT;
 
 	USBTransferResult transfer_result = usb_device_submit_transfer_request_blocking(transfer_request);
-	assert(transfer_result.result_type == _USBResultType_InterrupTransfer);
+	assert(transfer_result.result_type == _USBResultType_InterruptTransfer);
 
 	if (transfer_result.payload.interrupt_transfer.result_code == _USBResultCode_Completed)
 	{

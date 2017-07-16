@@ -35,7 +35,7 @@ TrackerDeviceEnumerator::TrackerDeviceEnumerator()
 
 	m_deviceType= CommonDeviceState::PS3EYE;
 	assert(m_deviceType >= 0 && GET_DEVICE_TYPE_INDEX(m_deviceType) < MAX_CAMERA_TYPE_INDEX);
-	m_usb_enumerator = usb_device_enumerator_allocate();
+	m_usb_enumerator = usb_device_enumerator_allocate(DeviceClass::DeviceClass_Camera);
 
 	// If the first USB device handle isn't a tracker, move on to the next device
 	if (testUSBEnumerator())

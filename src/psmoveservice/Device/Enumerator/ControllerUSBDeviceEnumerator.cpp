@@ -41,7 +41,7 @@ ControllerUSBDeviceEnumerator::ControllerUSBDeviceEnumerator()
 
 	m_deviceType= CommonDeviceState::PSMove;
 	assert(m_deviceType >= 0 && GET_DEVICE_TYPE_INDEX(m_deviceType) < MAX_CONTROLLER_TYPE_INDEX);
-	m_usb_enumerator = usb_device_enumerator_allocate();
+	m_usb_enumerator = usb_device_enumerator_allocate(DeviceClass::DeviceClass_RawUSB);
 
 	if (is_controller_supported(m_usb_enumerator, m_deviceTypeFilter, m_deviceType))
 	{
@@ -64,7 +64,7 @@ ControllerUSBDeviceEnumerator::ControllerUSBDeviceEnumerator(CommonDeviceState::
 
 	m_deviceType= CommonDeviceState::PSMove;
 	assert(m_deviceType >= 0 && GET_DEVICE_TYPE_INDEX(m_deviceType) < MAX_CONTROLLER_TYPE_INDEX);
-	m_usb_enumerator = usb_device_enumerator_allocate();
+	m_usb_enumerator = usb_device_enumerator_allocate(DeviceClass::DeviceClass_RawUSB);
 
 	// If the first USB device handle isn't a tracker, move on to the next device
 	if (is_controller_supported(m_usb_enumerator, m_deviceTypeFilter, m_deviceType))
