@@ -321,12 +321,14 @@ void WinUSBApi::device_enumerator_dispose(USBDeviceEnumerator* enumerator)
     }
 }
 
-USBDeviceState *WinUSBApi::open_usb_device(USBDeviceEnumerator* enumerator)
+USBDeviceState *WinUSBApi::open_usb_device(USBDeviceEnumerator* enumerator, int interface_index)
 {
     WinUSBDeviceEnumerator *winusb_enumerator = static_cast<WinUSBDeviceEnumerator *>(enumerator);
 	WinUSBDeviceState *winusb_device_state = nullptr;
 
-	if (device_enumerator_is_valid(enumerator))
+	if (device_enumerator_is_valid(enumerator) && 
+        (winusb_enumerator->getCompositeInterfaceIndex() == interface_index ||
+         winusb_enumerator->getCompositeInterfaceIndex() == -1))
 	{
 		bool bOpened = false;
 		
@@ -337,6 +339,7 @@ USBDeviceState *WinUSBApi::open_usb_device(USBDeviceEnumerator* enumerator)
         winusb_device_state->unique_id= winusb_enumerator->getUniqueID();
         winusb_device_state->vendor_id= winusb_enumerator->getVendorId();
         winusb_device_state->product_id= winusb_enumerator->getProductId();
+        winusb_device_state->composite_interface_index= winusb_enumerator->getCompositeInterfaceIndex();
 
         winusb_device_state->device_handle = CreateFile(
             winusb_device_state->device_path.c_str(),
@@ -789,6 +792,7 @@ bool WinUSBApi::get_usb_device_filter(const USBDeviceState* device_state, struct
 
 		outDeviceInfo->product_id = winusb_device_state->product_id;
 		outDeviceInfo->vendor_id = winusb_device_state->vendor_id;
+        outDeviceInfo->interface_mask = (winusb_device_state->composite_interface_index != -1) ? (1 << winusb_device_state->composite_interface_index) : 0;
 		bSuccess = true;
 	}
 

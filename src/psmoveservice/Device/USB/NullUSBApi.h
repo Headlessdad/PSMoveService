@@ -20,7 +20,7 @@ public:
 	void device_enumerator_next(USBDeviceEnumerator* enumerator) override;
 	void device_enumerator_dispose(USBDeviceEnumerator* enumerator) override;
 
-	USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator) override;
+	USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator, int interface_index) override;
 	void close_usb_device(USBDeviceState* device_state) override;
 	bool can_usb_device_be_opened(struct USBDeviceEnumerator* enumerator, char *outReason, size_t bufferSize) override;
 

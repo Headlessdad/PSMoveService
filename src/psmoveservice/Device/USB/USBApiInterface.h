@@ -72,7 +72,7 @@ public:
 	virtual void device_enumerator_next(USBDeviceEnumerator* enumerator) = 0;
 	virtual void device_enumerator_dispose(USBDeviceEnumerator* enumerator) = 0;
 
-	virtual USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator) = 0;
+	virtual USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator, int interface_index) = 0;
 	virtual void close_usb_device(USBDeviceState* device_state) = 0;
 	virtual bool can_usb_device_be_opened(struct USBDeviceEnumerator* enumerator, char *outReason, size_t bufferSize) = 0;
 

@@ -7,7 +7,7 @@ struct LibUSBDeviceState : USBDeviceState
 {
 	struct libusb_device *device;
 	struct libusb_device_handle *device_handle;
-	bool is_interface_claimed;
+	int claimed_interface_index;
 
 	void clear()
 	{
@@ -15,7 +15,7 @@ struct LibUSBDeviceState : USBDeviceState
 
 		device= nullptr;
 		device_handle= nullptr;
-		is_interface_claimed= false;
+		claimed_interface_index= -1;
 	}
 };
 
@@ -36,7 +36,7 @@ public:
 	void device_enumerator_next(USBDeviceEnumerator* enumerator) override;
 	void device_enumerator_dispose(USBDeviceEnumerator* enumerator) override;
 
-	USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator) override;
+	USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator, int interface_index) override;
 	void close_usb_device(USBDeviceState* device_state) override;
 	bool can_usb_device_be_opened(struct USBDeviceEnumerator* enumerator, char *outReason, size_t bufferSize) override;
 

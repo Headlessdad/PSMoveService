@@ -56,7 +56,7 @@ void NullUSBApi::device_enumerator_dispose(USBDeviceEnumerator* enumerator)
 	delete enumerator;
 }
 
-USBDeviceState *NullUSBApi::open_usb_device(USBDeviceEnumerator* enumerator)
+USBDeviceState *NullUSBApi::open_usb_device(USBDeviceEnumerator* enumerator, int interface_index)
 {
 	return nullptr;
 }

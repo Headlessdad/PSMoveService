@@ -144,7 +144,7 @@ void LibUSBApi::device_enumerator_dispose(USBDeviceEnumerator* enumerator)
 	delete libusb_enumerator;
 }
 
-USBDeviceState *LibUSBApi::open_usb_device(USBDeviceEnumerator* enumerator)
+USBDeviceState *LibUSBApi::open_usb_device(USBDeviceEnumerator* enumerator, int interface_index)
 {
 	LibUSBDeviceEnumerator *libusb_enumerator = static_cast<LibUSBDeviceEnumerator *>(enumerator);
 	LibUSBDeviceState *libusb_device_state = nullptr;
@@ -162,10 +162,10 @@ USBDeviceState *LibUSBApi::open_usb_device(USBDeviceEnumerator* enumerator)
 		int res = libusb_open(libusb_device_state->device, &libusb_device_state->device_handle);
 		if (res == LIBUSB_SUCCESS)
 		{
-			res = libusb_claim_interface(libusb_device_state->device_handle, 0);
+			res = libusb_claim_interface(libusb_device_state->device_handle, interface_index);
 			if (res == 0)
 			{
-				libusb_device_state->is_interface_claimed = true;
+				libusb_device_state->claimed_interface_index= interface_index;
 				bOpened = true;
 
 				SERVER_LOG_INFO("USBAsyncRequestManager::openUSBDevice") << "Successfully opened device " << libusb_device_state->public_handle;
@@ -196,11 +196,11 @@ void LibUSBApi::close_usb_device(USBDeviceState* device_state)
 	{
 		LibUSBDeviceState *libusb_device_state = static_cast<LibUSBDeviceState *>(device_state);
 
-		if (libusb_device_state->is_interface_claimed)
+		if (libusb_device_state->claimed_interface_index != -1)
 		{
 			SERVER_LOG_INFO("USBAsyncRequestManager::closeUSBDevice") << "Released USB interface on handle " << libusb_device_state->public_handle;
-			libusb_release_interface(libusb_device_state->device_handle, 0);
-			libusb_device_state->is_interface_claimed = false;
+			libusb_release_interface(libusb_device_state->device_handle, libusb_device_state->claimed_interface_index);
+			libusb_device_state->claimed_interface_index = -1;
 		}
 
 		if (libusb_device_state->device_handle != nullptr)
@@ -757,6 +757,8 @@ bool LibUSBApi::get_usb_device_filter(const USBDeviceState* device_state, struct
 			struct libusb_device_descriptor dev_desc;
 			libusb_get_device_descriptor(const_cast<libusb_device *>(dev), &dev_desc);
 
+            int interfaceCount= dev_desc.bNumConfigurations < 32 ? dev_desc.bNumConfigurations : 32;
+            outDeviceInfo->interface_mask= (1<<interfaceCount)-1;
 			outDeviceInfo->product_id = dev_desc.idProduct;
 			outDeviceInfo->vendor_id = dev_desc.idVendor;
 			bSuccess = true;

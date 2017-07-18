@@ -19,6 +19,7 @@ struct WinUSBDeviceState : USBDeviceState
     unsigned char isochronous_out_pipe;
     int product_id;
     int vendor_id;
+    int composite_interface_index;
 
 	void clear()
 	{
@@ -37,6 +38,7 @@ struct WinUSBDeviceState : USBDeviceState
         isochronous_out_pipe= 0xFF;
         product_id= -1;
         vendor_id= -1;
+        composite_interface_index= -1;
 	}
 };
 
@@ -56,7 +58,7 @@ public:
 	void device_enumerator_next(USBDeviceEnumerator* enumerator) override;
 	void device_enumerator_dispose(USBDeviceEnumerator* enumerator) override;
 
-	USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator) override;
+	USBDeviceState *open_usb_device(USBDeviceEnumerator* enumerator, int interface_index) override;
 	void close_usb_device(USBDeviceState* device_state) override;
 	bool can_usb_device_be_opened(struct USBDeviceEnumerator* enumerator, char *outReason, size_t bufferSize) override;
 

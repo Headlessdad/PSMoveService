@@ -222,11 +222,11 @@ public:
     }
 
     // -- Device Actions ----
-	t_usb_device_handle openUSBDevice(struct USBDeviceEnumerator* enumerator)
+	t_usb_device_handle openUSBDevice(struct USBDeviceEnumerator* enumerator, int interface_index)
     {
 		t_usb_device_handle handle= k_invalid_usb_device_handle;
 
-		USBDeviceState *state = m_usb_api->open_usb_device(enumerator);
+		USBDeviceState *state = m_usb_api->open_usb_device(enumerator, interface_index);
 
         if (state != nullptr)
         {
@@ -984,9 +984,9 @@ bool usb_device_enumerator_get_path(struct USBDeviceEnumerator* enumerator, char
 }
 
 // -- Device Actions ----
-t_usb_device_handle usb_device_open(struct USBDeviceEnumerator* enumerator)
+t_usb_device_handle usb_device_open(struct USBDeviceEnumerator* enumerator, int interface_index)
 {
-	return USBDeviceManager::getInstance()->getImplementation()->openUSBDevice(enumerator);
+	return USBDeviceManager::getInstance()->getImplementation()->openUSBDevice(enumerator, interface_index);
 }
 
 void usb_device_close(t_usb_device_handle usb_device_handle)

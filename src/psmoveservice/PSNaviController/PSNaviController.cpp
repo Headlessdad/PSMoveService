@@ -235,7 +235,7 @@ bool PSNaviController::open(
 		{
 			const ControllerUSBDeviceEnumerator *usbControllerEnum= pEnum->get_usb_controller_enumerator();
 			assert(usbControllerEnum != nullptr);
-			const t_usb_device_handle usb_device_handle = usb_device_open(usbControllerEnum->get_usb_device_enumerator());
+			const t_usb_device_handle usb_device_handle = usb_device_open(usbControllerEnum->get_usb_device_enumerator(), 0);
 
 			if (usb_device_handle != k_invalid_usb_device_handle)
 			{
@@ -353,8 +353,6 @@ void PSNaviController::close()
     {
 		if (APIContext->usb_device_handle != k_invalid_usb_device_handle)
 		{
-			USBDeviceManager *usbMgr = USBDeviceManager::getInstance();
-
 			SERVER_LOG_INFO("PSNaviController::close") << "Closing PSNaviController(" << APIContext->usb_device_path << ")";
 			usb_device_close(APIContext->usb_device_handle);
 			APIContext->usb_device_handle = k_invalid_usb_device_handle;
@@ -982,7 +980,6 @@ psnavi_read_usb_interrupt_pipe(
 	unsigned char *buffer,
 	size_t max_buffer_size)
 {
-	USBDeviceManager *usbMgr = USBDeviceManager::getInstance();
 	int result = 0;
 
 	USBTransferRequest transfer_request;

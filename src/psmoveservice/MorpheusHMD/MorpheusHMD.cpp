@@ -7,8 +7,10 @@
 #include "MathUtility.h"
 #include "ServerLog.h"
 #include "ServerUtility.h"
+#include "USBDeviceManager.h"
+
 #include "hidapi.h"
-#include "libusb.h"
+
 #include <vector>
 #include <cstdlib>
 #ifdef _WIN32
@@ -17,6 +19,8 @@
 #include <math.h>
 
 //-- constants -----
+#define BULK_TRANSFER_TIMEOUT	  500 /* timeout in ms */
+
 #define MORPHEUS_VENDOR_ID 0x054c
 #define MORPHEUS_PRODUCT_ID 0x09af
 
@@ -27,7 +31,7 @@
 #define MORPHEUS_COMMAND_INTERFACE 5
 
 #define MORPHEUS_USB_INTERFACES_MASK_TO_CLAIM ( \
-	(1 << MORPHEUS_COMMAND_INTERFACE) \
+	 \
 )
 
 #define MORPHEUS_COMMAND_MAGIC 0xAA
@@ -71,11 +75,9 @@ public:
     std::string sensor_device_path;
 	hid_device *sensor_device_handle;
 	
-	// LibUSB state
-	libusb_context *usb_context;
-	libusb_device_handle *usb_device_handle;
-	libusb_config_descriptor *usb_device_descriptor;
-	unsigned int usb_claimed_interface_mask;
+	// USB state
+    std::string usb_device_path;
+	t_usb_device_handle usb_device_handle;
 
     MorpheusUSBContext()
     {
@@ -87,10 +89,8 @@ public:
 		device_identifier = "";
         sensor_device_path = "";
 		sensor_device_handle = nullptr;
-		usb_context = nullptr;
-		usb_device_handle = nullptr;
-		usb_device_descriptor = nullptr;
-		usb_claimed_interface_mask = 0;
+        usb_device_path= "";
+        usb_device_handle= k_invalid_usb_device_handle;
     }
 };
 
@@ -444,7 +444,7 @@ bool MorpheusHMD::open(
 
         if (getIsOpen())  // Controller was opened and has an index
         {
-			if (USBContext->usb_device_handle != nullptr)
+			if (USBContext->usb_device_handle != k_invalid_usb_device_handle)
 			{
 				if (morpheus_set_headset_power(USBContext, true))
 				{
@@ -475,7 +475,7 @@ bool MorpheusHMD::open(
 
 void MorpheusHMD::close()
 {
-    if (USBContext->sensor_device_handle != nullptr || USBContext->usb_device_handle != nullptr)
+    if (USBContext->sensor_device_handle != nullptr || USBContext->usb_device_handle != k_invalid_usb_device_handle)
     {
 		if (USBContext->sensor_device_handle != nullptr)
 		{
@@ -483,7 +483,7 @@ void MorpheusHMD::close()
 			hid_close(USBContext->sensor_device_handle);
 		}
 
-		if (USBContext->usb_device_handle != nullptr)
+		if (USBContext->usb_device_handle != k_invalid_usb_device_handle)
 		{
 			SERVER_LOG_INFO("MorpheusHMD::close") << "Closing MorpheusHMD command interface";
 			morpheus_set_headset_power(USBContext, false);
@@ -538,7 +538,7 @@ MorpheusHMD::getUSBDevicePath() const
 bool
 MorpheusHMD::getIsOpen() const
 {
-    return USBContext->sensor_device_handle != nullptr && USBContext->usb_device_handle != nullptr;
+    return USBContext->sensor_device_handle != nullptr && USBContext->usb_device_handle != k_invalid_usb_device_handle;
 }
 
 IControllerInterface::ePollResult
@@ -665,7 +665,7 @@ long MorpheusHMD::getMaxPollFailureCount() const
 
 void MorpheusHMD::setTrackingEnabled(bool bEnable)
 {
-	if (USBContext->usb_device_handle != nullptr)
+	if (USBContext->usb_device_handle != k_invalid_usb_device_handle)
 	{
 		if (!bIsTracking && bEnable)
 		{
@@ -684,94 +684,59 @@ void MorpheusHMD::setTrackingEnabled(bool bEnable)
 static bool morpheus_open_usb_device(
 	MorpheusUSBContext *morpheus_context)
 {
-	bool bSuccess = true;
-	if (libusb_init(&morpheus_context->usb_context) == LIBUSB_SUCCESS)
-	{
-		libusb_set_debug(morpheus_context->usb_context, 3);
-	}
-	else
-	{
-		SERVER_LOG_ERROR("morpeus_open_usb_device") << "libusb context initialization failed!";
-		bSuccess = false;
-	}
+	bool bSuccess = false;
 
-	if (bSuccess)
-	{
-		morpheus_context->usb_device_handle = 
-			libusb_open_device_with_vid_pid(
-				morpheus_context->usb_context,
-				MORPHEUS_VENDOR_ID, MORPHEUS_PRODUCT_ID);
+    USBDeviceEnumerator* usb_device_enumerator= usb_device_enumerator_allocate(DeviceClass::DeviceClass_RawUSB);
 
-		if (morpheus_context->usb_device_handle == nullptr)
-		{
-			SERVER_LOG_ERROR("morpeus_open_usb_device") << "Morpheus USB device not found!";
-			bSuccess = false;
-		}
-	}
+    if (usb_device_enumerator != nullptr)
+    {
+        while (!bSuccess && usb_device_enumerator_is_valid(usb_device_enumerator))
+        {
+            USBDeviceFilter deviceInfo;
+            if (usb_device_enumerator_get_filter(usb_device_enumerator, deviceInfo) &&
+                deviceInfo.vendor_id == MORPHEUS_VENDOR_ID &&
+                deviceInfo.product_id == MORPHEUS_PRODUCT_ID &&
+                (deviceInfo.interface_mask & (1 << MORPHEUS_COMMAND_INTERFACE)) > 0)
+            {
+                bSuccess= true;
+                break;
+            }
+            else
+            {
+                usb_device_enumerator_next(usb_device_enumerator);
+            }
+        }        
+    }
 
-	if (bSuccess)
-	{
-		libusb_device *device = libusb_get_device(morpheus_context->usb_device_handle);
-		int result = libusb_get_config_descriptor_by_value(
-			device, 
-			MORPHEUS_CONFIGURATION_PSVR, 
-			&morpheus_context->usb_device_descriptor);
+    if (bSuccess)
+    {
+	    const t_usb_device_handle usb_device_handle = usb_device_open(usb_device_enumerator, MORPHEUS_COMMAND_INTERFACE);
+	    if (usb_device_handle != k_invalid_usb_device_handle)
+	    {
+		    SERVER_LOG_INFO("morpeus_open_usb_devicen") << "  Successfully opened USB handle " << usb_device_handle;
 
-		if (result != LIBUSB_SUCCESS) 
-		{
-			SERVER_LOG_ERROR("morpeus_open_usb_device") << "Failed to retrieve Morpheus usb config descriptor";
-			bSuccess = false;
-		}
-	}
+            char szPathBuffer[512];
+            if (usb_device_enumerator_get_path(usb_device_enumerator, szPathBuffer, sizeof(szPathBuffer)))
+            {
+                morpheus_context->usb_device_path = szPathBuffer;
+            }
 
-	for (int interface_index = 0; 
-		 bSuccess && interface_index < morpheus_context->usb_device_descriptor->bNumInterfaces; 
-		 interface_index++) 
-	{
-		int mask = 1 << interface_index;
+		    morpheus_context->usb_device_handle = usb_device_handle;
+	    }
+	    else
+	    {
+		    SERVER_LOG_ERROR("morpeus_open_usb_device") << "  Failed to open USB handle " << usb_device_handle;
+	    }
+    }
+    else
+    {
+        SERVER_LOG_ERROR("morpeus_open_usb_device") << "  Failed to find Morpheus USB command interface (VID:0x054c, PID: 0x09af, Interface: 5)";
+    }
 
-		if (MORPHEUS_USB_INTERFACES_MASK_TO_CLAIM & mask) 
-		{
-			int result = 0;
-
-			#ifndef _WIN32
-			result = libusb_kernel_driver_active(morpheus_context->usb_device_handle, interface_index);
-			if (result < 0) 
-			{
-				SERVER_LOG_ERROR("morpeus_open_usb_device") << "USB Interface #"<< interface_index <<" driver status failed";
-				bSuccess = false;
-			}
-
-			if (bSuccess && result == 1)
-			{
-				SERVER_LOG_ERROR("morpeus_open_usb_device") << "Detach kernel driver on interface #" << interface_index;
-
-				result = libusb_detach_kernel_driver(morpheus_context->usb_device_handle, interface_index);
-				if (result != LIBUSB_SUCCESS) 
-				{
-					SERVER_LOG_ERROR("morpeus_open_usb_device") << "Interface #" << interface_index << " detach failed";
-					bSuccess = false;
-				}
-			}
-			#endif //_WIN32
-
-			result = libusb_claim_interface(morpheus_context->usb_device_handle, interface_index);
-			if (result == LIBUSB_SUCCESS)
-			{
-				morpheus_context->usb_claimed_interface_mask |= mask;
-			}
-			else
-			{
-				SERVER_LOG_ERROR("morpeus_open_usb_device") << "Interface #" << interface_index << " claim failed";
-				bSuccess = false;
-			}
-		}
-	}
-
-	if (!bSuccess)
-	{
-		morpheus_close_usb_device(morpheus_context);
-	}
+    if (usb_device_enumerator != nullptr)
+    {
+        usb_device_enumerator_free(usb_device_enumerator);
+    }
 
 	return bSuccess;
 }
@@ -779,33 +744,11 @@ static bool morpheus_open_usb_device(
 static void morpheus_close_usb_device(
 	MorpheusUSBContext *morpheus_context)
 {
-	for (int interface_index = 0; morpheus_context->usb_claimed_interface_mask != 0; ++interface_index) 
+	if (morpheus_context->usb_device_handle != k_invalid_usb_device_handle)
 	{
-		int interface_mask = 1 << interface_index;
-
-		if ((morpheus_context->usb_claimed_interface_mask & interface_mask) != 0)
-		{
-			libusb_release_interface(morpheus_context->usb_device_handle, interface_index);
-			morpheus_context->usb_claimed_interface_mask &= ~interface_mask;
-		}
-	}
-
-	if (morpheus_context->usb_device_descriptor != nullptr)
-	{
-		libusb_free_config_descriptor(morpheus_context->usb_device_descriptor);
-		morpheus_context->usb_device_descriptor = nullptr;
-	}
-
-	if (morpheus_context->usb_device_handle != nullptr)
-	{
-		libusb_close(morpheus_context->usb_device_handle);
-		morpheus_context->usb_device_handle = nullptr;
-	}
-
-	if (morpheus_context->usb_context != nullptr)
-	{
-		libusb_exit(morpheus_context->usb_context);
-		morpheus_context->usb_context = nullptr;
+		SERVER_LOG_INFO("morpheus_close_usb_device") << "Closing PSNaviController(" << morpheus_context->usb_device_path << ")";
+		usb_device_close(morpheus_context->usb_device_handle);
+		morpheus_context->usb_device_handle = k_invalid_usb_device_handle;
 	}
 }
 
@@ -906,26 +849,43 @@ static bool morpheus_send_command(
 	MorpheusUSBContext *morpheus_context,
 	MorpheusCommand &command)
 {
-	if (morpheus_context->usb_device_handle != nullptr)
+	if (morpheus_context->usb_device_handle != k_invalid_usb_device_handle)
 	{
-		const size_t command_length = static_cast<size_t>(command.header.length) + sizeof(command.header);
-		const int endpointAddress =
-			(morpheus_context->usb_device_descriptor->interface[MORPHEUS_COMMAND_INTERFACE]
-				.altsetting[0]
-				.endpoint[0]
-				.bEndpointAddress) & ~MORPHEUS_ENDPOINT_IN;
+        const int endpointAddress = 0x80;
+		//const int endpointAddress =
+		//	(morpheus_context->usb_device_descriptor->interface[MORPHEUS_COMMAND_INTERFACE]
+		//		.altsetting[0]
+		//		.endpoint[0]
+		//		.bEndpointAddress) & ~MORPHEUS_ENDPOINT_IN;
 
-		int transferredByteCount = 0;
-		int result =
-			libusb_bulk_transfer(
-				morpheus_context->usb_device_handle,
-				endpointAddress,
-				(unsigned char *)&command,
-				command_length,
-				&transferredByteCount,
-				0);
+        const size_t command_length = static_cast<size_t>(command.header.length) + sizeof(command.header);
+	    int result = 0;
 
-		return result == LIBUSB_SUCCESS && transferredByteCount == command_length;
+	    USBTransferRequest transfer_request;
+	    transfer_request.request_type = _USBRequestType_BulkTransfer;
+
+	    USBRequestPayload_BulkTransfer &bulk_transfer = transfer_request.payload.bulk_transfer;
+	    bulk_transfer.usb_device_handle = morpheus_context->usb_device_handle;
+	    bulk_transfer.endpoint = endpointAddress;
+	    bulk_transfer.length = static_cast<unsigned int>(command_length);
+	    bulk_transfer.timeout = BULK_TRANSFER_TIMEOUT;
+
+		static_assert(sizeof(transfer_request.payload.bulk_transfer.data) >= sizeof(MorpheusCommand), "bulk_transfer max payload too small for MorpheusCommand");
+		memcpy(transfer_request.payload.interrupt_transfer.data, (unsigned char *)&command, command_length);
+
+	    USBTransferResult transfer_result = usb_device_submit_transfer_request_blocking(transfer_request);
+	    assert(transfer_result.result_type == _USBResultType_BulkTransfer);
+
+	    if (transfer_result.payload.bulk_transfer.result_code == _USBResultCode_Completed)
+	    {
+		    result = transfer_result.payload.bulk_transfer.dataLength;
+	    }
+	    else
+	    {
+		    const char * error_text = usb_device_get_error_string(transfer_result.payload.bulk_transfer.result_code);
+		    SERVER_LOG_ERROR("morpheus_send_command") << "bulk transfer failed with error: " << error_text;
+		    result = -static_cast<int>(transfer_result.payload.interrupt_transfer.result_code);
+	    }
 	}
 	else
 	{
