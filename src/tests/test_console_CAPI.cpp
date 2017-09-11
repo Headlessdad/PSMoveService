@@ -262,6 +262,9 @@ private:
             case PSMTracker_PS3Eye:
                 tracker_type= "PS3Eye";
                 break;
+            case PSMTracker_VirtualStereoCamera:
+                tracker_type= "Virtual Stereo";
+                break;
             }
 
             std::cout << "  Tracker ID: " << trackerList.trackers[tracker_ix].tracker_id << " is a " << tracker_type << std::endl;

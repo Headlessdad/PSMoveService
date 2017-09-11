@@ -16,6 +16,7 @@
 #include "SharedTrackerState.h"
 #include "TrackerManager.h"
 #include "PoseFilterInterface.h"
+#include "VirtualStereoTracker.h"
 
 #include <boost/interprocess/shared_memory_object.hpp>
 #include <boost/interprocess/mapped_region.hpp>
@@ -57,7 +58,7 @@ public:
         dispose();
     }
 
-    bool initialize(const char *shared_memory_name, int width, int height, int stride)
+    bool initialize(const char *shared_memory_name, int section_count, int width, int height, int stride)
     {
         bool bSuccess = false;
 
@@ -84,7 +85,8 @@ public:
                     permissions);
 
             // Resize the shared memory
-            m_shared_memory_object->truncate(SharedVideoFrameHeader::computeTotalSize(stride, width));
+            m_shared_memory_object->truncate(
+                SharedVideoFrameHeader::computeTotalSize(section_count, stride, width));
 
             // Map all of the shared memory for read/write access
             m_region = new boost::interprocess::mapped_region(*m_shared_memory_object, boost::interprocess::read_write);
@@ -96,11 +98,12 @@ public:
             frameState->width = width;
             frameState->height = height;
             frameState->stride = stride;
+            frameState->section_count= section_count;
             frameState->frame_index = 0;
             std::memset(
-                frameState->getBufferMutable(),
+                frameState->getBufferMutable(0),
                 0,
-                SharedVideoFrameHeader::computeVideoBufferSize(stride, height));
+                SharedVideoFrameHeader::computeVideoBufferSize(section_count, stride, height));
 
             bSuccess = true;
         }
@@ -138,19 +141,42 @@ public:
         }
     }
 
-    void writeVideoFrame(const unsigned char *buffer)
+    void writeMonoVideoFrame(const unsigned char *buffer)
     {
         SharedVideoFrameHeader *sharedFrameState = getFrameHeader();
         boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(sharedFrameState->mutex);
 
+        size_t section_size = 
+            SharedVideoFrameHeader::computeVideoSectionSize(sharedFrameState->stride, sharedFrameState->height);
         size_t buffer_size = 
-            SharedVideoFrameHeader::computeVideoBufferSize(sharedFrameState->stride, sharedFrameState->height);
+            SharedVideoFrameHeader::computeVideoBufferSize(1, sharedFrameState->stride, sharedFrameState->height);
         size_t total_shared_mem_size =
-            SharedVideoFrameHeader::computeTotalSize(sharedFrameState->stride, sharedFrameState->height);
+            SharedVideoFrameHeader::computeTotalSize(1, sharedFrameState->stride, sharedFrameState->height);
+        assert(sharedFrameState->section_count == 1);
+        assert(section_size = buffer_size);
         assert(m_region->get_size() >= total_shared_mem_size);
 
         ++sharedFrameState->frame_index;
-        std::memcpy(sharedFrameState->getBufferMutable(), buffer, buffer_size);
+        std::memcpy(sharedFrameState->getBufferMutable(ITrackerInterface::PrimarySection), buffer, section_size);
+    }
+
+    void writeStereoVideoFrame(const unsigned char *left_buffer, const unsigned char *right_buffer)
+    {
+        SharedVideoFrameHeader *sharedFrameState = getFrameHeader();
+        boost::interprocess::scoped_lock<boost::interprocess::interprocess_mutex> lock(sharedFrameState->mutex);
+
+        size_t section_size = 
+            SharedVideoFrameHeader::computeVideoSectionSize(sharedFrameState->stride, sharedFrameState->height);
+        size_t buffer_size = 
+            SharedVideoFrameHeader::computeVideoBufferSize(2, sharedFrameState->stride, sharedFrameState->height);
+        size_t total_shared_mem_size =
+            SharedVideoFrameHeader::computeTotalSize(2, sharedFrameState->stride, sharedFrameState->height);
+        assert(sharedFrameState->section_count == 2);
+        assert(m_region->get_size() >= total_shared_mem_size);
+
+        ++sharedFrameState->frame_index;
+        std::memcpy(sharedFrameState->getBufferMutable(ITrackerInterface::LeftSection), left_buffer, section_size);
+        std::memcpy(sharedFrameState->getBufferMutable(ITrackerInterface::RightSection), right_buffer, section_size);
     }
 
 protected:
@@ -718,9 +744,11 @@ static void computeOpenCVCameraExtrinsicMatrix(const ITrackerInterface *tracker_
                                                       cv::Matx34f &extrinsicOut);
 cv::Mat cvDistCoeffs = cv::Mat(4, 1, cv::DataType<float>::type, 0.f);
 static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_device,
+                                               ITrackerInterface::eTrackerVideoSection section,
                                                cv::Matx33f &intrinsicOut,
                                                cv::Matx<float, 5, 1> &distortionOut);
-static cv::Matx34f computeOpenCVCameraPinholeMatrix(const ITrackerInterface *tracker_device);
+static cv::Matx34f computeOpenCVCameraPinholeMatrix(const ITrackerInterface *tracker_device,
+                                                    ITrackerInterface::eTrackerVideoSection section);
 static bool computeTrackerRelativeLightBarProjection(
     const CommonDeviceTrackingShape *tracking_shape,
     const t_opencv_float_contour &opencv_contour,
@@ -740,6 +768,7 @@ static bool computeTrackerRelativePointCloudContourPose(
 static cv::Rect2i computeTrackerROIForPoseProjection(
     const bool disabled_roi,
     const ServerTrackerView *tracker,
+    const ITrackerInterface::eTrackerVideoSection section,
     const IPoseFilter* pose_filter,
     const CommonDeviceTrackingProjection *prior_tracking_projection,
     const CommonDeviceTrackingShape *tracking_shape);
@@ -774,10 +803,14 @@ ServerTrackerView::ServerTrackerView(const int device_id)
     : ServerDeviceView(device_id)
     , m_shared_memory_accesor(nullptr)
     , m_shared_memory_video_stream_count(0)
-    , m_opencv_buffer_state(nullptr)
     , m_device(nullptr)
 {
     ServerUtility::format_string(m_shared_memory_name, sizeof(m_shared_memory_name), "tracker_view_%d", device_id);
+
+    for (int i = 0; i < ITrackerInterface::MAX_SUPPORTED_SECTION_COUNT; ++i)
+    {
+        m_opencv_buffer_state[i]= nullptr;
+    }
 }
 
 ServerTrackerView::~ServerTrackerView()
@@ -787,9 +820,12 @@ ServerTrackerView::~ServerTrackerView()
         delete m_shared_memory_accesor;
     }
 
-    if (m_opencv_buffer_state != nullptr)
+    for (int i = 0; i < ITrackerInterface::MAX_SUPPORTED_SECTION_COUNT; ++i)
     {
-        delete m_opencv_buffer_state;
+        if (m_opencv_buffer_state[i] != nullptr)
+        {
+            delete m_opencv_buffer_state[i];
+        }
     }
 
     if (m_device != nullptr)
@@ -810,6 +846,12 @@ ServerTrackerView::getTrackerDriverType() const
     return m_device->getDriverType();
 }
 
+bool 
+ServerTrackerView::getIsStereoCamera() const
+{
+    return m_device->getIsStereoCamera();
+}
+
 std::string
 ServerTrackerView::getUSBDevicePath() const
 {
@@ -828,32 +870,11 @@ bool ServerTrackerView::open(const class DeviceEnumerator *enumerator)
 
     if (bSuccess)
     {
-        int width, height, stride;
+        // Allocate the shared 
+        reallocate_shared_memory();
 
-        // Make sure the shared memory block has been removed first
-        boost::interprocess::shared_memory_object::remove(m_shared_memory_name);
-
-        // Query the video frame first so that we know how big to make the buffer
-        if (m_device->getVideoFrameDimensions(&width, &height, &stride))
-        {
-            assert(m_shared_memory_accesor == nullptr);
-            m_shared_memory_accesor = new SharedVideoFrameReadWriteAccessor();
-
-            if (!m_shared_memory_accesor->initialize(m_shared_memory_name, width, height, stride))
-            {
-                delete m_shared_memory_accesor;
-                m_shared_memory_accesor = nullptr;
-
-                SERVER_LOG_ERROR("ServerTrackerView::open()") << "Failed to allocated shared memory: " << m_shared_memory_name;
-            }
-
-            // Allocate the OpenCV scratch buffers used for finding tracking blobs
-            m_opencv_buffer_state = new OpenCVBufferState(m_device);
-        }
-        else
-        {
-            SERVER_LOG_ERROR("ServerTrackerView::open()") << "Failed to video frame dimensions";
-        }
+        // Allocate the open cv buffers used for tracking filtering
+        reallocate_opencv_buffer_state();
     }
 
     return bSuccess;
@@ -865,6 +886,15 @@ void ServerTrackerView::close()
     {
         delete m_shared_memory_accesor;
         m_shared_memory_accesor = nullptr;
+    }
+
+    for (int i = 0; i < ITrackerInterface::MAX_SUPPORTED_SECTION_COUNT; ++i)
+    {
+        if (m_opencv_buffer_state[i] != nullptr)
+        {
+            delete m_opencv_buffer_state[i];
+            m_opencv_buffer_state[i]= nullptr;
+        }
     }
 
     ServerDeviceView::close();
@@ -887,14 +917,37 @@ bool ServerTrackerView::poll()
 
     if (bSuccess && m_device != nullptr)
     {
-        const unsigned char *buffer = m_device->getVideoFrameBuffer();
-
-        if (buffer != nullptr)
+        if (m_device->getIsStereoCamera())
         {
-            // Cache the raw video frame
-            if (m_opencv_buffer_state != nullptr)
+            const unsigned char *left_buffer = m_device->getVideoFrameBuffer(ITrackerInterface::LeftSection);
+            const unsigned char *right_buffer = m_device->getVideoFrameBuffer(ITrackerInterface::RightSection);
+
+            if (left_buffer != nullptr && right_buffer != nullptr)
             {
-                m_opencv_buffer_state->writeVideoFrame(buffer);
+                // Cache the left raw video frame
+                if (m_opencv_buffer_state[ITrackerInterface::LeftSection] != nullptr)
+                {
+                    m_opencv_buffer_state[ITrackerInterface::LeftSection]->writeVideoFrame(left_buffer);
+                }
+
+                // Cache the right raw video frame
+                if (m_opencv_buffer_state[ITrackerInterface::RightSection] != nullptr)
+                {
+                    m_opencv_buffer_state[ITrackerInterface::RightSection]->writeVideoFrame(right_buffer);
+                }
+            }
+        }
+        else
+        {
+            const unsigned char *buffer = m_device->getVideoFrameBuffer(ITrackerInterface::PrimarySection);
+
+            if (buffer != nullptr)
+            {
+                // Cache the raw video frame
+                if (m_opencv_buffer_state[ITrackerInterface::PrimarySection] != nullptr)
+                {
+                    m_opencv_buffer_state[ITrackerInterface::PrimarySection]->writeVideoFrame(buffer);
+                }
             }
         }
     }
@@ -902,19 +955,88 @@ bool ServerTrackerView::poll()
     return bSuccess;
 }
 
+void ServerTrackerView::reallocate_shared_memory()
+{
+    int width, height, stride;
+
+    // close buffer
+    if (m_shared_memory_accesor != nullptr)
+    {
+        delete m_shared_memory_accesor;
+        m_shared_memory_accesor = nullptr;
+    }
+
+    // Make sure the shared memory block has been removed first
+    boost::interprocess::shared_memory_object::remove(m_shared_memory_name);
+
+    // Query the video frame first so that we know how big to make the buffer
+    if (m_device->getVideoFrameDimensions(&width, &height, &stride))
+    {
+        int section_count= m_device->getIsStereoCamera() ? 2 : 1;
+
+        assert(m_shared_memory_accesor == nullptr);
+        m_shared_memory_accesor = new SharedVideoFrameReadWriteAccessor();
+
+        if (!m_shared_memory_accesor->initialize(m_shared_memory_name, section_count, width, height, stride))
+        {
+            delete m_shared_memory_accesor;
+            m_shared_memory_accesor = nullptr;
+
+            SERVER_LOG_ERROR("ServerTrackerView::reallocate_shared_memory()") << "Failed to allocated shared memory: " << m_shared_memory_name;
+        }
+    }
+}
+
+void ServerTrackerView::reallocate_opencv_buffer_state()
+{
+    // Delete any existing opencv buffers
+    for (int i = 0; i < ITrackerInterface::MAX_SUPPORTED_SECTION_COUNT; ++i)
+    {
+        if (m_opencv_buffer_state[i] != nullptr)
+        {
+            delete m_opencv_buffer_state[i];
+            m_opencv_buffer_state[i]= nullptr;
+        }
+    }
+
+    // Allocate the OpenCV scratch buffers used for finding tracking blobs
+    if (m_device->getIsStereoCamera())
+    {
+        m_opencv_buffer_state[ITrackerInterface::LeftSection] = new OpenCVBufferState(m_device);
+        m_opencv_buffer_state[ITrackerInterface::RightSection] = new OpenCVBufferState(m_device);
+    }
+    else
+    {
+        m_opencv_buffer_state[ITrackerInterface::PrimarySection] = new OpenCVBufferState(m_device);
+    }
+}
+
 bool ServerTrackerView::allocate_device_interface(const class DeviceEnumerator *enumerator)
 {
+    m_device= ServerTrackerView::allocate_tracker_interface(enumerator);
+
+    return m_device != nullptr;
+}
+
+ITrackerInterface *ServerTrackerView::allocate_tracker_interface(const class DeviceEnumerator *enumerator)
+{
+    ITrackerInterface *tracker_interface= nullptr;
+
     switch (enumerator->get_device_type())
     {
     case CommonDeviceState::PS3EYE:
-    {
-        m_device = new PS3EyeTracker();
-    } break;
+        {
+            tracker_interface = new PS3EyeTracker();
+        } break;
+    case CommonDeviceState::VirtualStereoCamera:
+        {
+            tracker_interface = new VirtualStereoTracker();
+        } break;
     default:
         break;
     }
 
-    return m_device != nullptr;
+    return tracker_interface;
 }
 
 void ServerTrackerView::free_device_interface()
@@ -934,7 +1056,17 @@ void ServerTrackerView::publish_device_data_frame()
     // Copy the video frame to shared memory (if requested)
     if (m_shared_memory_accesor != nullptr && m_shared_memory_video_stream_count > 0)
     {
-        m_shared_memory_accesor->writeVideoFrame(m_opencv_buffer_state->bgrShmemBuffer->data);
+        if (m_device->getIsStereoCamera())
+        {
+            m_shared_memory_accesor->writeStereoVideoFrame(
+                m_opencv_buffer_state[ITrackerInterface::LeftSection]->bgrShmemBuffer->data,
+                m_opencv_buffer_state[ITrackerInterface::RightSection]->bgrShmemBuffer->data);
+        }
+        else
+        {
+            m_shared_memory_accesor->writeMonoVideoFrame(
+                m_opencv_buffer_state[ITrackerInterface::PrimarySection]->bgrShmemBuffer->data);
+        }
     }
     
     // Tell the server request handler we want to send out tracker updates.
@@ -958,6 +1090,10 @@ void ServerTrackerView::generate_tracker_data_frame_for_stream(
     switch (tracker_view->getTrackerDeviceType())
     {
     case CommonDeviceState::PS3EYE:
+        {
+            //TODO: PS3EYE tracker location
+        } break;
+    case CommonDeviceState::VirtualStereoCamera:
         {
             //TODO: PS3EYE tracker location
         } break;
@@ -987,43 +1123,12 @@ void ServerTrackerView::setFrameWidth(double value, bool bUpdateConfig)
 {
     if (value == m_device->getFrameWidth()) return;
 
-    // close buffer
-    if (m_shared_memory_accesor != nullptr)
-    {
-        delete m_shared_memory_accesor;
-        m_shared_memory_accesor = nullptr;
-    }
-
     // change frame width
     m_device->setFrameWidth(value, bUpdateConfig);
 
-    // reopen buffer
-    int width, height, stride;
-
-    // Make sure the shared memory block has been removed first
-    boost::interprocess::shared_memory_object::remove(m_shared_memory_name);
-
-    // Query the video frame first so that we know how big to make the buffer
-    if (m_device->getVideoFrameDimensions(&width, &height, &stride))
-    {
-        assert(m_shared_memory_accesor == nullptr);
-        m_shared_memory_accesor = new SharedVideoFrameReadWriteAccessor();
-
-        if (!m_shared_memory_accesor->initialize(m_shared_memory_name, width, height, stride))
-        {
-            delete m_shared_memory_accesor;
-            m_shared_memory_accesor = nullptr;
-
-            SERVER_LOG_ERROR("ServerTrackerView::open()") << "Failed to allocated shared memory: " << m_shared_memory_name;
-        }
-
-        // Allocate the OpenCV scratch buffers used for finding tracking blobs
-        m_opencv_buffer_state = new OpenCVBufferState(m_device);
-    }
-    else
-    {
-        SERVER_LOG_ERROR("ServerTrackerView::open()") << "Failed to video frame dimensions";
-    }
+    // Resize the shared memory and opencv buffers
+    reallocate_shared_memory();
+    reallocate_opencv_buffer_state();
 }
 
 double ServerTrackerView::getFrameHeight() const
@@ -1035,43 +1140,13 @@ void ServerTrackerView::setFrameHeight(double value, bool bUpdateConfig)
 {
     if (value == m_device->getFrameHeight()) return;
 
-    // close buffer
-    if (m_shared_memory_accesor != nullptr)
-    {
-        delete m_shared_memory_accesor;
-        m_shared_memory_accesor = nullptr;
-    }
-
     // change frame height
     m_device->setFrameHeight(value, bUpdateConfig);
 
-    // reopen buffer
-    int width, height, stride;
+    // Resize the shared memory and opencv buffers
+    reallocate_shared_memory();
+    reallocate_opencv_buffer_state();
 
-    // Make sure the shared memory block has been removed first
-    boost::interprocess::shared_memory_object::remove(m_shared_memory_name);
-
-    // Query the video frame first so that we know how big to make the buffer
-    if (m_device->getVideoFrameDimensions(&width, &height, &stride))
-    {
-        assert(m_shared_memory_accesor == nullptr);
-        m_shared_memory_accesor = new SharedVideoFrameReadWriteAccessor();
-
-        if (!m_shared_memory_accesor->initialize(m_shared_memory_name, width, height, stride))
-        {
-            delete m_shared_memory_accesor;
-            m_shared_memory_accesor = nullptr;
-
-            SERVER_LOG_ERROR("ServerTrackerView::open()") << "Failed to allocated shared memory: " << m_shared_memory_name;
-        }
-
-        // Allocate the OpenCV scratch buffers used for finding tracking blobs
-        m_opencv_buffer_state = new OpenCVBufferState(m_device);
-    }
-    else
-    {
-        SERVER_LOG_ERROR("ServerTrackerView::open()") << "Failed to video frame dimensions";
-    }
 }
 
 double ServerTrackerView::getFrameRate() const
@@ -1105,12 +1180,14 @@ void ServerTrackerView::setGain(double value, bool bUpdateConfig)
 }
 
 void ServerTrackerView::getCameraIntrinsics(
+    ITrackerInterface::eTrackerVideoSection section,
     float &outFocalLengthX, float &outFocalLengthY,
     float &outPrincipalX, float &outPrincipalY,
     float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
     float &outDistortionP1, float &outDistortionP2) const
 {
     m_device->getCameraIntrinsics(
+        section,
         outFocalLengthX, outFocalLengthY,
         outPrincipalX, outPrincipalY,
         outDistortionK1, outDistortionK2, outDistortionK3,
@@ -1118,12 +1195,14 @@ void ServerTrackerView::getCameraIntrinsics(
 }
 
 void ServerTrackerView::setCameraIntrinsics(
+    ITrackerInterface::eTrackerVideoSection section,
     float focalLengthX, float focalLengthY,
     float principalX, float principalY,
     float distortionK1, float distortionK2, float distortionK3,
     float distortionP1, float distortionP2)
 {
     m_device->setCameraIntrinsics(
+        section,
         focalLengthX, focalLengthY,
         principalX, principalY,
         distortionK1, distortionK2, distortionK3,
@@ -1240,6 +1319,54 @@ ServerTrackerView::computeProjectionForController(
     const CommonDeviceTrackingShape *tracking_shape,
     ControllerOpticalPoseEstimation *out_pose_estimate)
 {
+    bool bSuccess= false;
+
+    if (m_device->getIsStereoCamera())
+    {
+        bool bLeftSuccess=
+            computeProjectionForControllerInSection(
+                tracked_controller,
+                tracking_shape,
+                ITrackerInterface::LeftSection,
+                out_pose_estimate);
+        bool bRightSuccess= true;
+            //computeProjectionForControllerInSection(
+            //    tracked_controller,
+            //    tracking_shape,
+            //    ITrackerInterface::RightSection,
+            //    out_pose_estimate);
+
+        if (bLeftSuccess && bRightSuccess)
+        {
+            //TODO: Compute pose estimate using stereo triangulation
+	        //4) Find corresponding points on 2d curves using fundamental matrix
+	        //5) Triangulate a single 3d curve
+	        //6) Compute normals on curve
+	        //7) Use SICP::point_to_plane to align model points to triangulated curve points
+		       // a. Use previous frames best fit model as a starting point
+	        //8) Use RigidMotionEstimator::point_to_point(X, U) to find the transform that best aligned the model points with the curve points
+        }
+    }
+    else
+    {
+        bSuccess=
+            computeProjectionForControllerInSection(
+                tracked_controller,
+                tracking_shape,
+                ITrackerInterface::PrimarySection,
+                out_pose_estimate);
+    }
+
+    return bSuccess;
+}
+
+bool
+ServerTrackerView::computeProjectionForControllerInSection(
+    const ServerControllerView* tracked_controller,
+    const CommonDeviceTrackingShape *tracking_shape,
+    const ITrackerInterface::eTrackerVideoSection section,
+    ControllerOpticalPoseEstimation *out_pose_estimate)
+{
     bool bSuccess = true;
 
     // Get the HSV filter used to find the tracking blob
@@ -1268,19 +1395,21 @@ ServerTrackerView::computeProjectionForController(
 
     cv::Rect2i ROI= computeTrackerROIForPoseProjection(
         bRoiDisabled,
-        this,		
+        this,
+        section,
         bIsTracking ? tracked_controller->getPoseFilter() : nullptr,
         bIsTracking ? &priorPoseEst->projection : nullptr,
         tracking_shape);
 
-    m_opencv_buffer_state->applyROI(ROI);
+    m_opencv_buffer_state[section]->applyROI(ROI);
 
     // Find the contour associated with the controller
     t_opencv_int_contour_list biggest_contours;
     std::vector<double> contour_areas;
     if (bSuccess)
     {
-        bSuccess = m_opencv_buffer_state->computeBiggestNContours(hsvColorRange, biggest_contours, contour_areas, 1);
+        bSuccess = m_opencv_buffer_state[section]->computeBiggestNContours(
+            hsvColorRange, biggest_contours, contour_areas, 1);
     }
     
     // Process the contour for its 2D and 3D pose.
@@ -1290,7 +1419,7 @@ ServerTrackerView::computeProjectionForController(
         // Needed for undistortion.
         cv::Matx33f camera_matrix;
         cv::Matx<float, 5, 1> distortions;
-        computeOpenCVCameraIntrinsicMatrix(m_device, camera_matrix, distortions);
+        computeOpenCVCameraIntrinsicMatrix(m_device, section, camera_matrix, distortions);
                 
         // Compute the tracker relative 3d position of the controller from the contour
         switch (tracking_shape->shape_type)
@@ -1301,7 +1430,7 @@ ServerTrackerView::computeProjectionForController(
                 // Compute the convex hull of the contour
                 t_opencv_int_contour convex_contour;
                 cv::convexHull(biggest_contours[0], convex_contour);
-                m_opencv_buffer_state->draw_contour(convex_contour);
+                m_opencv_buffer_state[section]->draw_contour(convex_contour);
 
                 // Convert integer to float
                 t_opencv_float_contour convex_contour_f;
@@ -1362,7 +1491,7 @@ ServerTrackerView::computeProjectionForController(
                         k_real_pi*out_pose_estimate->projection.shape.ellipse.half_x_extent*out_pose_estimate->projection.shape.ellipse.half_y_extent;
                 
                     //Draw results onto m_opencv_buffer_state
-                    m_opencv_buffer_state->draw_pose_projection(out_pose_estimate->projection);
+                    m_opencv_buffer_state[section]->draw_pose_projection(out_pose_estimate->projection);
 
                     bSuccess = true;
                 }
@@ -1372,7 +1501,7 @@ ServerTrackerView::computeProjectionForController(
         case eCommonTrackingShapeType::LightBar:
             {
                 // Draw the raw source contour
-                m_opencv_buffer_state->draw_contour(biggest_contours[0]);
+                m_opencv_buffer_state[section]->draw_contour(biggest_contours[0]);
 
                 // Convert integer contour to float
                 t_opencv_float_contour biggest_contour_f;
@@ -1394,7 +1523,7 @@ ServerTrackerView::computeProjectionForController(
                         &out_pose_estimate->projection);
 
                 //Draw results onto m_opencv_buffer_state
-                m_opencv_buffer_state->draw_pose_projection(out_pose_estimate->projection);
+                m_opencv_buffer_state[section]->draw_pose_projection(out_pose_estimate->projection);
             } break;
         default:
             assert(0 && "Unreachable");
@@ -1422,6 +1551,54 @@ bool ServerTrackerView::computeProjectionForHMD(
     const class ServerHMDView* tracked_hmd,
     const struct CommonDeviceTrackingShape *tracking_shape,
     struct HMDOpticalPoseEstimation *out_pose_estimate)
+{
+    bool bSuccess= false;
+
+    if (m_device->getIsStereoCamera())
+    {
+        bool bLeftSuccess=
+            computeProjectionForHmdInSection(
+                tracked_hmd,
+                tracking_shape,
+                ITrackerInterface::LeftSection,
+                out_pose_estimate);
+        bool bRightSuccess= true;
+            //computeProjectionForControllerInSection(
+            //    tracked_hmd,
+            //    tracking_shape,
+            //    ITrackerInterface::RightSection,
+            //    out_pose_estimate);
+
+        if (bLeftSuccess && bRightSuccess)
+        {
+            //TODO: Compute pose estimate using stereo triangulation
+	        //4) Find corresponding points on 2d curves using fundamental matrix
+	        //5) Triangulate a single 3d curve
+	        //6) Compute normals on curve
+	        //7) Use SICP::point_to_plane to align model points to triangulated curve points
+		       // a. Use previous frames best fit model as a starting point
+	        //8) Use RigidMotionEstimator::point_to_point(X, U) to find the transform that best aligned the model points with the curve points
+        }
+    }
+    else
+    {
+        bSuccess=
+            computeProjectionForHmdInSection(
+                tracked_hmd,
+                tracking_shape,
+                ITrackerInterface::PrimarySection,
+                out_pose_estimate);
+    }
+
+    return bSuccess;
+}
+
+bool
+ServerTrackerView::computeProjectionForHmdInSection(
+    const ServerHMDView* tracked_hmd,
+    const CommonDeviceTrackingShape *tracking_shape,
+    const ITrackerInterface::eTrackerVideoSection section,
+    HMDOpticalPoseEstimation *out_pose_estimate)
 {
     bool bSuccess = true;
 
@@ -1451,11 +1628,12 @@ bool ServerTrackerView::computeProjectionForHMD(
 
     cv::Rect2i ROI = computeTrackerROIForPoseProjection(
         bRoiDisabled,
-        this, 
+        this,
+        section,
         bIsTracking ? tracked_hmd->getPoseFilter() : nullptr,
         bIsTracking ? &priorPoseEst->projection : nullptr,
         tracking_shape);
-    m_opencv_buffer_state->applyROI(ROI);
+    m_opencv_buffer_state[section]->applyROI(ROI);
 
     // Find the N best contours associated with the HMD
     t_opencv_int_contour_list biggest_contours;
@@ -1463,7 +1641,7 @@ bool ServerTrackerView::computeProjectionForHMD(
     if (bSuccess)
     {
         bSuccess = 
-            m_opencv_buffer_state->computeBiggestNContours(
+            m_opencv_buffer_state[section]->computeBiggestNContours(
                 hsvColorRange, biggest_contours, contour_areas, CommonDeviceTrackingProjection::MAX_POINT_CLOUD_POINT_COUNT);
     }
 
@@ -1472,7 +1650,7 @@ bool ServerTrackerView::computeProjectionForHMD(
     {
         cv::Matx33f camera_matrix;
         cv::Matx<float, 5, 1> distortions;
-        computeOpenCVCameraIntrinsicMatrix(m_device, camera_matrix, distortions);
+        computeOpenCVCameraIntrinsicMatrix(m_device, section, camera_matrix, distortions);
 
         switch (tracking_shape->shape_type)
         {
@@ -1482,7 +1660,7 @@ bool ServerTrackerView::computeProjectionForHMD(
                 // Compute the convex hull of the contour
                 t_opencv_int_contour convex_contour;
                 cv::convexHull(biggest_contours[0], convex_contour);
-                m_opencv_buffer_state->draw_contour(convex_contour);
+                m_opencv_buffer_state[section]->draw_contour(convex_contour);
 
                 // Convert integer to float
                 t_opencv_float_contour convex_contour_f;
@@ -1543,7 +1721,7 @@ bool ServerTrackerView::computeProjectionForHMD(
                         k_real_pi*out_pose_estimate->projection.shape.ellipse.half_x_extent*out_pose_estimate->projection.shape.ellipse.half_y_extent;
                 
                     //Draw results onto m_opencv_buffer_state
-                    m_opencv_buffer_state->draw_pose_projection(out_pose_estimate->projection);
+                    m_opencv_buffer_state[section]->draw_pose_projection(out_pose_estimate->projection);
 
                     bSuccess = true;
                 }
@@ -1558,7 +1736,7 @@ bool ServerTrackerView::computeProjectionForHMD(
                 for (auto it = biggest_contours.begin(); it != biggest_contours.end(); ++it)
                 {
                     // Draw the source contour
-                    m_opencv_buffer_state->draw_contour(*it);
+                    m_opencv_buffer_state[section]->draw_contour(*it);
 
                     // Convert integer contour to float
                     t_opencv_float_contour biggest_contour_f;
@@ -1584,7 +1762,7 @@ bool ServerTrackerView::computeProjectionForHMD(
                         out_pose_estimate);
 
                 //Draw results onto m_opencv_buffer_state
-                m_opencv_buffer_state->draw_pose_projection(out_pose_estimate->projection);
+                m_opencv_buffer_state[section]->draw_pose_projection(out_pose_estimate->projection);
             } break;
         default:
             assert(0 && "Unreachable");
@@ -1864,8 +2042,8 @@ ServerTrackerView::triangulateWorldPosition(
     // Compute the pinhole camera matrix for each tracker that allows you to raycast
     // from the tracker center in world space through the screen location, into the world
     // See: http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
-    cv::Mat projMat1 = cv::Mat(computeOpenCVCameraPinholeMatrix(tracker->m_device));
-    cv::Mat projMat2 = cv::Mat(computeOpenCVCameraPinholeMatrix(other_tracker->m_device));
+    cv::Mat projMat1 = cv::Mat(computeOpenCVCameraPinholeMatrix(tracker->m_device, ITrackerInterface::PrimarySection));
+    cv::Mat projMat2 = cv::Mat(computeOpenCVCameraPinholeMatrix(other_tracker->m_device, ITrackerInterface::PrimarySection));
 
     // Triangulate the world position from the two cameras
     cv::Mat point3D(1, 1, CV_32FC4);
@@ -1910,8 +2088,8 @@ ServerTrackerView::triangulateWorldPositions(
     // Compute the pinhole camera matrix for each tracker that allows you to raycast
     // from the tracker center in world space through the screen location, into the world
     // See: http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
-    cv::Mat projMat1 = cv::Mat(computeOpenCVCameraPinholeMatrix(tracker->m_device));
-    cv::Mat projMat2 = cv::Mat(computeOpenCVCameraPinholeMatrix(other_tracker->m_device));
+    cv::Mat projMat1 = cv::Mat(computeOpenCVCameraPinholeMatrix(tracker->m_device, ITrackerInterface::PrimarySection));
+    cv::Mat projMat2 = cv::Mat(computeOpenCVCameraPinholeMatrix(other_tracker->m_device, ITrackerInterface::PrimarySection));
 
     // Triangulate the world positions from the two cameras
     cv::Mat points3D(1, screen_location_count, CV_32FC4);
@@ -1931,11 +2109,13 @@ ServerTrackerView::triangulateWorldPositions(
 
 
 std::vector<CommonDeviceScreenLocation>
-ServerTrackerView::projectTrackerRelativePositions(const std::vector<CommonDevicePosition> &objectPositions) const
+ServerTrackerView::projectTrackerRelativePositions(
+    const ITrackerInterface::eTrackerVideoSection section,
+    const std::vector<CommonDevicePosition> &objectPositions) const
 {
     cv::Matx33f camera_matrix;
     cv::Matx<float, 5, 1> distortions;
-    computeOpenCVCameraIntrinsicMatrix(m_device, camera_matrix, distortions);
+    computeOpenCVCameraIntrinsicMatrix(m_device, section, camera_matrix, distortions);
     
     // Use the identity transform for tracker relative positions
     cv::Mat rvec(3, 1, cv::DataType<double>::type, double(0));
@@ -1972,7 +2152,7 @@ CommonDeviceScreenLocation
 ServerTrackerView::projectTrackerRelativePosition(const CommonDevicePosition *trackerRelativePosition) const
 {
     std::vector<CommonDevicePosition> trp_vec {*trackerRelativePosition};
-    CommonDeviceScreenLocation screenLocation = projectTrackerRelativePositions(trp_vec)[0];
+    CommonDeviceScreenLocation screenLocation = projectTrackerRelativePositions(ITrackerInterface::PrimarySection, trp_vec)[0];
 
     return screenLocation;
 }
@@ -2017,10 +2197,12 @@ static void computeOpenCVCameraExtrinsicMatrix(const ITrackerInterface *tracker_
 }
 
 static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_device,
+                                               ITrackerInterface::eTrackerVideoSection section,
                                                cv::Matx33f &intrinsicOut,
                                                cv::Matx<float, 5, 1> &distortionOut)
 {
-    tracker_device->getCameraIntrinsics(intrinsicOut(0, 0), intrinsicOut(1, 1),  //F_PX, F_PY
+    tracker_device->getCameraIntrinsics(section,
+                                        intrinsicOut(0, 0), intrinsicOut(1, 1),  //F_PX, F_PY
                                         intrinsicOut(0, 2), intrinsicOut(1, 2), //PrincipalX, Y
                                         distortionOut(0, 0), distortionOut(1, 0), distortionOut(4, 0), //K1, K2, K3
                                         distortionOut(2, 0), distortionOut(3, 0));  //P1, P2
@@ -2033,13 +2215,15 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
     intrinsicOut(2, 0) = 0.f;   intrinsicOut(2, 1) = 0.f;   intrinsicOut(2, 2) = 1.f;
 }
 
-static cv::Matx34f computeOpenCVCameraPinholeMatrix(const ITrackerInterface *tracker_device)
+static cv::Matx34f computeOpenCVCameraPinholeMatrix(
+    const ITrackerInterface *tracker_device,
+    ITrackerInterface::eTrackerVideoSection section)
 {
     cv::Matx34f extrinsic_matrix;
     computeOpenCVCameraExtrinsicMatrix(tracker_device, extrinsic_matrix);
     cv::Matx33f intrinsic_matrix;
     cv::Matx<float, 5, 1> distortion;
-    computeOpenCVCameraIntrinsicMatrix(tracker_device, intrinsic_matrix, distortion);
+    computeOpenCVCameraIntrinsicMatrix(tracker_device, section, intrinsic_matrix, distortion);
     cv::Matx34f pinhole_matrix = intrinsic_matrix * extrinsic_matrix;
 
     return pinhole_matrix;
@@ -2179,7 +2363,7 @@ static bool computeTrackerRelativeLightBarPose(
         // Get the tracker "intrinsic" matrix that encodes the camera FOV
         cv::Matx33f cvCameraMatrix;
         cv::Matx<float, 5, 1> cvDistCoeffs;
-        computeOpenCVCameraIntrinsicMatrix(tracker_device, cvCameraMatrix, cvDistCoeffs);
+        computeOpenCVCameraIntrinsicMatrix(tracker_device, ITrackerInterface::PrimarySection, cvCameraMatrix, cvDistCoeffs);
 
         // Fill out the initial guess in OpenCV format for the contour pose
         // if a guess pose was provided
@@ -2316,6 +2500,7 @@ static bool computeTrackerRelativePointCloudContourPose(
 static cv::Rect2i computeTrackerROIForPoseProjection(
     const bool roi_disabled,
     const ServerTrackerView *tracker,
+    const ITrackerInterface::eTrackerVideoSection section,
     const IPoseFilter* pose_filter,
     const CommonDeviceTrackingProjection *prior_tracking_projection,
     const CommonDeviceTrackingShape *tracking_shape)
@@ -2446,7 +2631,8 @@ static cv::Rect2i computeTrackerROIForPoseProjection(
         // The size of the ROI computed by projecting the bounding box 
         {
             std::vector<CommonDevicePosition> trps{ tl, br };
-            std::vector<CommonDeviceScreenLocation> screen_locs = tracker->projectTrackerRelativePositions(trps);
+            std::vector<CommonDeviceScreenLocation> screen_locs = 
+                tracker->projectTrackerRelativePositions(section, trps);
 
             const int proj_min_x = static_cast<int>(std::min(screen_locs[0].x, screen_locs[1].x));
             const int proj_max_x = static_cast<int>(std::max(screen_locs[0].x, screen_locs[1].x));

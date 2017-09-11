@@ -80,6 +80,8 @@ file(GLOB PSMOVESERVICE_TRACKER_SRC
     "${CMAKE_CURRENT_LIST_DIR}/PSMoveTracker/*.h"
     "${CMAKE_CURRENT_LIST_DIR}/PSMoveTracker/PSEye/*.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/PSMoveTracker/PSEye/*.h"
+    "${CMAKE_CURRENT_LIST_DIR}/VirtualStereoTracker/*.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/VirtualStereoTracker/*.h"	
 )
 source_group("Tracker" FILES ${PSMOVESERVICE_TRACKER_SRC})
 
@@ -105,7 +107,6 @@ list(APPEND PSMOVE_SERVICE_INCL_DIRS
     ${CMAKE_CURRENT_LIST_DIR}/Device/View
     ${CMAKE_CURRENT_LIST_DIR}/Filter
     ${CMAKE_CURRENT_LIST_DIR}/MorpheusHMD
-    ${CMAKE_CURRENT_LIST_DIR}/VirtualHMD
     ${CMAKE_CURRENT_LIST_DIR}/Platform
     ${CMAKE_CURRENT_LIST_DIR}/PSMoveConfig
     ${CMAKE_CURRENT_LIST_DIR}/PSDualShock4
@@ -115,6 +116,8 @@ list(APPEND PSMOVE_SERVICE_INCL_DIRS
     ${CMAKE_CURRENT_LIST_DIR}/PSMoveTracker/PSEye
     ${CMAKE_CURRENT_LIST_DIR}/Server
     ${CMAKE_CURRENT_LIST_DIR}/VirtualController
+    ${CMAKE_CURRENT_LIST_DIR}/VirtualHMD
+	${CMAKE_CURRENT_LIST_DIR}/VirtualStereoTracker
 )
 
 # Eigen math library

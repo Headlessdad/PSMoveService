@@ -135,8 +135,17 @@ typedef enum
 typedef enum
 {
     PSMTracker_None= -1,
-    PSMTracker_PS3Eye
+    PSMTracker_PS3Eye,
+    PSMTracker_VirtualStereoCamera
 } PSMTrackerType;
+
+/// The list of possible sub sections to extract from a video frame
+typedef enum
+{
+    PSMVideoFrameSection_Left                 = 0, ///< The left frame from a stereo camera
+    PSMVideoFrameSection_Right                = 1, ///< The right frame from a stereo camera
+    PSMVideoFrameSection_Primary              = 0  ///< The only frame from a stereo camera
+} PSMVideoFrameSection;
 
 /// The list of possible HMD types tracked by PSMoveService
 typedef enum
@@ -420,6 +429,7 @@ typedef struct
     PSMVector2f tracker_focal_lengths; ///< lens focal length in pixels
     PSMVector2f tracker_principal_point; ///< lens center point in pixels
     PSMVector2f tracker_screen_dimensions; ///< tracker image size in pixels
+    int tracker_section_count; ///< 2 for a stereo camera, 1 for a mono camera
     float tracker_hfov; ///< tracker horizontal FOV in degrees
     float tracker_vfov; ///< tracker vertical FOV in degrees
     float tracker_znear; ///< tracker z-near plane distance in cm
@@ -1268,13 +1278,22 @@ PSM_PUBLIC_FUNCTION(PSMResult) PSM_PollTrackerVideoStream(PSMTrackerID tracker_i
  */
 PSM_PUBLIC_FUNCTION(PSMResult) PSM_CloseTrackerVideoStream(PSMTrackerID tracker_id);
 
+/** \brief Get the number of sections contained in a video buffer for the given tracker
+	\remark This will be 2 for stereo cameras and 1 for mono camera. Sections are assumed to have the same dimensions.
+	\param tracker_id The tracker to poll the next video frame from
+	\param[out] out_section_count The section count of the video frame
+	\return PSMResult_Success if there was frame data available to read
+ */
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetTrackerVideoFrameSectionCount(PSMTrackerID tracker_id, int *out_section_count); 
+
 /** \brief Fetch the next video frame buffer from an opened tracker video stream
 	\remark Make sure the video buffer is large enough to hold tracker dimension x 3 bytes.
 	\param tracker_id The tracker to poll the next video frame from
+    \param section_index The portion of the video buffer desired (0 or 1 for stereo cameras, 0 for mono camera)
 	\param[out] out_buffer A pointer to the buffer to copy the video frame into
 	\return PSMResult_Success if there was frame data available to read
  */
-PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetTrackerVideoFrameBuffer(PSMTrackerID tracker_id, const unsigned char **out_buffer); 
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetTrackerVideoFrameBuffer(PSMTrackerID tracker_id, PSMVideoFrameSection section_index, const unsigned char **out_buffer); 
 
 /** \brief Helper function to fetch tracking frustum properties from a tracker
 	\param The id of the tracker we wish to get the tracking frustum properties for

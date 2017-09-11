@@ -26,7 +26,7 @@ struct TrackerProfile
 
     inline void clear()
     {
-		frame_width = 0.f;
+        frame_width = 0.f;
 		// frame_height = 0.f;
 		frame_rate = 0.f;
 		exposure = 0.f;
@@ -60,6 +60,7 @@ public:
 	bool disable_roi;
     TrackerProfile default_tracker_profile;
 	float global_forward_degrees;
+    int virtual_stereo_tracker_count;
 
 	CommonDeviceVector get_global_forward_axis() const;
 	CommonDeviceVector get_global_backward_axis() const;

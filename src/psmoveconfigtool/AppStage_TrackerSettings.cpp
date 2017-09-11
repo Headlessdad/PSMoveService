@@ -64,11 +64,20 @@ void AppStage_TrackerSettings::render()
 
             switch (trackerInfo.tracker_type)
             {
-            case PSMoveProtocol::PS3EYE:
+            case PSMTracker_PS3Eye:
                 {
                     glm::mat4 scale3 = glm::scale(glm::mat4(1.f), glm::vec3(3.f, 3.f, 3.f));
                     drawPS3EyeModel(scale3);
                 } break;
+            case PSMTracker_VirtualStereoCamera:
+                {
+                    glm::mat4 left = glm::scale(glm::translate(glm::mat4(1.f), glm::vec3(-5.f, 0.f, 0.f)), glm::vec3(3.f, 3.f, 3.f));
+                    glm::mat4 right = glm::scale(glm::translate(glm::mat4(1.f), glm::vec3(5.f, 0.f, 0.f)), glm::vec3(3.f, 3.f, 3.f));
+
+                    drawPS3EyeModel(left);
+                    drawPS3EyeModel(right);
+                } break;
+
             default:
                 assert(0 && "Unreachable");
             }
@@ -231,7 +240,11 @@ void AppStage_TrackerSettings::renderUI()
             {
             case PSMTracker_PS3Eye:
                 {
-                    ImGui::BulletText("Controller Type: PS3 Eye");
+                    ImGui::BulletText("Camera Type: PS3 Eye");
+                } break;
+            case PSMTracker_VirtualStereoCamera:
+                {
+                    ImGui::BulletText("Camera Type: Virtual Stereo");
                 } break;
             default:
                 assert(0 && "Unreachable");

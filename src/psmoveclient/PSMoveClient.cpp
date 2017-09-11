@@ -52,6 +52,7 @@ public:
         , m_frame_width(0)
         , m_frame_height(0)
         , m_frame_stride(0)
+        , m_section_count(1)
         , m_last_frame_index(0)
     {}
 
@@ -129,20 +130,24 @@ public:
 
         // Make sure the target buffer is big enough to read the video frame into
         size_t buffer_size =
-            SharedVideoFrameHeader::computeVideoBufferSize(sharedFrameState->stride, sharedFrameState->height);
+            SharedVideoFrameHeader::computeVideoBufferSize(
+                sharedFrameState->section_count, sharedFrameState->stride, sharedFrameState->height);
 
         // Make sure the shared memory is the size we expect
         size_t total_shared_mem_size =
-            SharedVideoFrameHeader::computeTotalSize(sharedFrameState->stride, sharedFrameState->height);
+            SharedVideoFrameHeader::computeTotalSize(
+                sharedFrameState->section_count, sharedFrameState->stride, sharedFrameState->height);
         assert(m_region->get_size() >= total_shared_mem_size);
 
         // Re-allocate the buffer if any of the video properties changed
         if (m_frame_width != sharedFrameState->width ||
             m_frame_height != sharedFrameState->height ||
+            m_section_count != sharedFrameState->section_count ||
             m_frame_stride != sharedFrameState->stride)
         {
             freeVideoBuffer();
 
+            m_section_count = sharedFrameState->section_count;
             m_frame_width = sharedFrameState->width;
             m_frame_height = sharedFrameState->height;
             m_frame_stride = sharedFrameState->stride;
@@ -155,7 +160,7 @@ public:
         {
             if (buffer_size > 0)
             {
-                std::memcpy(m_bgr_frame_buffer, sharedFrameState->getBufferMutable(), buffer_size);
+                std::memcpy(m_bgr_frame_buffer, sharedFrameState->getBufferMutable(0), buffer_size);
             }
 
             m_last_frame_index = sharedFrameState->frame_index;
@@ -168,7 +173,7 @@ public:
 
     void allocateVideoBuffer()
     {
-        size_t buffer_size = SharedVideoFrameHeader::computeVideoBufferSize(m_frame_stride, m_frame_height);
+        size_t buffer_size = SharedVideoFrameHeader::computeVideoBufferSize(m_section_count, m_frame_stride, m_frame_height);
 
         if (buffer_size > 0)
         {
@@ -187,7 +192,11 @@ public:
         }
     }
 
-    inline const unsigned char *getVideoFrameBuffer() const { return m_bgr_frame_buffer; }
+    inline const unsigned char *getVideoFrameBuffer(int section_index) const { 
+        return m_bgr_frame_buffer 
+            + SharedVideoFrameHeader::computeVideoBufferSize(section_index, m_frame_stride, m_frame_height);
+    }
+    inline int getSectionCount() const { return m_section_count; }
     inline int getVideoFrameWidth() const { return m_frame_width; }
     inline int getVideoFrameHeight() const { return m_frame_height; }
     inline int getVideoFrameStride() const { return m_frame_stride; }
@@ -204,7 +213,7 @@ private:
     boost::interprocess::shared_memory_object *m_shared_memory_object;
     boost::interprocess::mapped_region *m_region;
     unsigned char *m_bgr_frame_buffer;
-    int m_frame_width, m_frame_height, m_frame_stride;
+    int m_frame_width, m_frame_height, m_frame_stride, m_section_count;
     int m_last_frame_index;
 };
 
@@ -1032,7 +1041,27 @@ void PSMoveClient::close_video_stream(PSMTrackerID tracker_id)
 	}
 }
 
-const unsigned char *PSMoveClient::get_video_frame_buffer(PSMTrackerID tracker_id) const
+int PSMoveClient::get_video_frame_section_count(PSMTrackerID tracker_id) const
+{
+    int section_count= 0;
+
+	if (IS_VALID_TRACKER_INDEX(tracker_id))
+	{
+		const PSMTracker *tracker= &m_trackers[tracker_id];
+
+		if (tracker->opaque_shared_memory_accesor != nullptr)
+		{
+			const SharedVideoFrameReadOnlyAccessor *shared_memory_accesor = 
+				reinterpret_cast<SharedVideoFrameReadOnlyAccessor *>(tracker->opaque_shared_memory_accesor);
+
+            section_count= shared_memory_accesor->getSectionCount();
+		}
+	}
+
+    return section_count;
+}
+
+const unsigned char *PSMoveClient::get_video_frame_buffer(PSMTrackerID tracker_id, int section_index) const
 {
 	const unsigned char *buffer= nullptr;
 
@@ -1045,7 +1074,10 @@ const unsigned char *PSMoveClient::get_video_frame_buffer(PSMTrackerID tracker_i
 			SharedVideoFrameReadOnlyAccessor *shared_memory_accesor = 
 				reinterpret_cast<SharedVideoFrameReadOnlyAccessor *>(tracker->opaque_shared_memory_accesor);
 
-			buffer= shared_memory_accesor->getVideoFrameBuffer();
+            if (section_index >= 0 && section_index < shared_memory_accesor->getSectionCount())
+            {
+    			buffer= shared_memory_accesor->getVideoFrameBuffer(section_index);
+            }
 		}
 	}
 

@@ -437,7 +437,7 @@ void AppStage_DistortionCalibration::update()
         if (PSM_PollTrackerVideoStream(m_tracker_view->tracker_info.tracker_id) == PSMResult_Success)
         {
             const unsigned char *video_frame_buffer= nullptr;
-			if (PSM_GetTrackerVideoFrameBuffer(m_tracker_view->tracker_info.tracker_id, &video_frame_buffer) == PSMResult_Success)
+			if (PSM_GetTrackerVideoFrameBuffer(m_tracker_view->tracker_info.tracker_id, PSMVideoFrameSection_Primary, &video_frame_buffer) == PSMResult_Success)
 			{
 				// Update the video frame buffers
 				m_opencv_state->applyVideoFrame(video_frame_buffer);

@@ -277,7 +277,7 @@ PS3EyeTracker::~PS3EyeTracker()
 // PSMoveTracker
 bool PS3EyeTracker::open() // Opens the first HID device for the tracker
 {
-    TrackerDeviceEnumerator enumerator;
+    TrackerDeviceEnumerator enumerator(TrackerDeviceEnumerator::CommunicationType_USB, CommonControllerState::PS3EYE);
     bool success = false;
 
     // Skip over everything that isn't a PS3EYE
@@ -522,11 +522,12 @@ bool PS3EyeTracker::getVideoFrameDimensions(
     return bSuccess;
 }
 
-const unsigned char *PS3EyeTracker::getVideoFrameBuffer() const
+const unsigned char *PS3EyeTracker::getVideoFrameBuffer(ITrackerInterface::eTrackerVideoSection section) const
 {
     const unsigned char *result = nullptr;
 
-    if (CaptureData != nullptr)
+    if (CaptureData != nullptr &&
+        section == ITrackerInterface::PrimarySection)
     {
         return static_cast<const unsigned char *>(CaptureData->frame.data);
     }
@@ -645,6 +646,7 @@ double PS3EyeTracker::getGain() const
 }
 
 void PS3EyeTracker::getCameraIntrinsics(
+    ITrackerInterface::eTrackerVideoSection section,
     float &outFocalLengthX, float &outFocalLengthY,
     float &outPrincipalX, float &outPrincipalY,
     float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
@@ -662,6 +664,7 @@ void PS3EyeTracker::getCameraIntrinsics(
 }
 
 void PS3EyeTracker::setCameraIntrinsics(
+    ITrackerInterface::eTrackerVideoSection section,
     float focalLengthX, float focalLengthY,
     float principalX, float principalY,
     float distortionK1, float distortionK2, float distortionK3,

@@ -291,6 +291,9 @@ public:
             case PSMoveProtocol::TrackerType::PS3EYE:
                 TrackerInfo.tracker_type = PSMTracker_PS3Eye;
                 break;
+            case PSMoveProtocol::TrackerType::VirtualStereoCamera:
+                TrackerInfo.tracker_type = PSMTracker_VirtualStereoCamera;
+                break;
             default:
                 assert(0 && "unreachable");
             }
@@ -319,6 +322,7 @@ public:
                 { TrackerResponse.tracker_principal_point().x(), TrackerResponse.tracker_principal_point().y() };
             TrackerInfo.tracker_screen_dimensions =
                 { TrackerResponse.tracker_screen_dimensions().x(), TrackerResponse.tracker_screen_dimensions().y() };
+            TrackerInfo.tracker_section_count= TrackerResponse.tracker_section_count();
 
             TrackerInfo.tracker_hfov = TrackerResponse.tracker_hfov();
             TrackerInfo.tracker_vfov = TrackerResponse.tracker_vfov();

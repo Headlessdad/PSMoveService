@@ -65,7 +65,8 @@ public:
 	bool open_video_stream(PSMTrackerID tracker_id);
 	bool poll_video_stream(PSMTrackerID tracker_id);
 	void close_video_stream(PSMTrackerID tracker_id);
-	const unsigned char *get_video_frame_buffer(PSMTrackerID tracker_id) const;
+    int get_video_frame_section_count(PSMTrackerID tracker_id) const;
+	const unsigned char *get_video_frame_buffer(PSMTrackerID tracker_id, int section_index) const;
 
     bool allocate_hmd_listener(PSMHmdID HmdID);
     void free_hmd_listener(PSMHmdID HmdID);   

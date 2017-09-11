@@ -154,8 +154,9 @@ DeviceTypeManager::update_connected_devices()
                         // Attempt to open the device
                         if (availableDeviceView->open(enumerator))
                         {
-                            const char *device_type_name =
-                                CommonDeviceState::getDeviceTypeString(availableDeviceView->getDevice()->getDeviceType());
+                            const IDeviceInterface* deviceInterface= availableDeviceView->getDevice();
+                            const CommonDeviceState::eDeviceType deviceType= deviceInterface->getDeviceType();
+                            const char *device_type_name = CommonDeviceState::getDeviceTypeString(deviceType);
 
                             SERVER_LOG_INFO("DeviceTypeManager::update_connected_devices") <<
                                 "Device device_id " << device_id_ << " (" << device_type_name << ") opened";

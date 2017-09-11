@@ -69,6 +69,7 @@ message Pose {
 
 enum TrackerType {
     PS3EYE = 0;
+	VirtualStereoCamera = 1;
 }
 
 enum TrackerDriver {
@@ -630,18 +631,19 @@ message Response {
             Pixel tracker_focal_lengths = 6;
             Pixel tracker_principal_point = 7;
             Pixel tracker_screen_dimensions = 8;
-            float tracker_hfov = 9;
-            float tracker_vfov = 10;
-            float tracker_znear = 11;
-            float tracker_zfar = 12;
-            float tracker_k1= 13;
-            float tracker_k2= 14;
-            float tracker_k3= 15;
-            float tracker_p1= 16;
-            float tracker_p2= 17;
+			int32 tracker_section_count = 9;
+            float tracker_hfov = 10;
+            float tracker_vfov = 11;
+            float tracker_znear = 12;
+            float tracker_zfar = 13;
+            float tracker_k1= 14;
+            float tracker_k2= 15;
+            float tracker_k3= 16;
+            float tracker_p1= 17;
+            float tracker_p2= 18;
 
             // Camera Extrinsic Properties
-            Pose tracker_pose = 18;
+            Pose tracker_pose = 19;
         }
         repeated TrackerInfo trackers = 1;
         float global_forward_degrees = 2;

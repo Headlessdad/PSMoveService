@@ -11,6 +11,7 @@
 #include "ServerDeviceView.h"
 #include "MathUtility.h"
 #include "PSMoveProtocol.pb.h"
+#include "VirtualStereoCameraEnumerator.h"
 
 //-- constants -----
 
@@ -20,7 +21,7 @@ const int TrackerManagerConfig::CONFIG_VERSION = 2;
 TrackerManagerConfig::TrackerManagerConfig(const std::string &fnamebase)
     : PSMoveConfig(fnamebase)
 {
-
+    virtual_stereo_tracker_count= 0;
 	controller_position_smoothing = 0.f;
 	ignore_pose_from_one_tracker = false;
     optical_tracking_timeout= 100;
@@ -71,6 +72,8 @@ TrackerManagerConfig::config2ptree()
 
 	writeColorPropertyPresetTable(&default_tracker_profile.color_preset_table, pt);
 
+    pt.put("virtual_stereo_tracker_count", virtual_stereo_tracker_count);
+
     return pt;
 }
 
@@ -81,6 +84,7 @@ TrackerManagerConfig::ptree2config(const boost::property_tree::ptree &pt)
 
     if (version == TrackerManagerConfig::CONFIG_VERSION)
     {
+        virtual_stereo_tracker_count = pt.get<int>("virtual_stereo_tracker_count", virtual_stereo_tracker_count);
 		controller_position_smoothing = pt.get<float>("controller_position_smoothing", controller_position_smoothing);
 		ignore_pose_from_one_tracker = pt.get<bool>("ignore_pose_from_one_tracker", ignore_pose_from_one_tracker);
         optical_tracking_timeout= pt.get<int>("optical_tracking_timeout", optical_tracking_timeout);
@@ -163,6 +167,10 @@ TrackerManager::startup()
         // Save back out the config in case there were updated defaults
         cfg.save();
 
+        // Copy the virtual stereo camera count into the Virtual Stereo Camera Enumerator's static variable.
+        // This breaks the dependency between the Tracker Manager and the enumerator.
+        VirtualStereoCameraEnumerator::virtual_stereo_camera_count= cfg.virtual_stereo_tracker_count;
+
         // Refresh the tracker list
         mark_tracker_list_dirty();
 
@@ -211,7 +219,7 @@ TrackerManager::mark_tracker_list_dirty()
 DeviceEnumerator *
 TrackerManager::allocate_device_enumerator()
 {
-    return new TrackerDeviceEnumerator;
+    return new TrackerDeviceEnumerator(TrackerDeviceEnumerator::CommunicationType_ALL);
 }
 
 void

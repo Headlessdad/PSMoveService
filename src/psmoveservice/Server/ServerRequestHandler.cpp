@@ -1716,8 +1716,11 @@ protected:
 
                 switch (tracker_view->getTrackerDeviceType())
                 {
-                case CommonControllerState::PS3EYE:
+                case CommonDeviceState::PS3EYE:
                     tracker_info->set_tracker_type(PSMoveProtocol::PS3EYE);
+                    break;
+                case CommonDeviceState::VirtualStereoCamera:
+                    tracker_info->set_tracker_type(PSMoveProtocol::VirtualStereoCamera);
                     break;
                 default:
                     assert(0 && "Unhandled tracker type");
@@ -1754,6 +1757,7 @@ protected:
                     float distortionP1, distortionP2;
 
                     tracker_view->getCameraIntrinsics(
+                        ITrackerInterface::PrimarySection, //###HipsterSloth TODO: Get both sections
                         focalLengthX, focalLengthY, 
                         principalX, principalY,
                         distortionK1, distortionK2, distortionK3,
@@ -1769,6 +1773,8 @@ protected:
                     tracker_info->mutable_tracker_screen_dimensions()->set_x(pixelWidth);
                     tracker_info->mutable_tracker_screen_dimensions()->set_y(pixelHeight);
 
+                    tracker_info->set_tracker_section_count(tracker_view->getIsStereoCamera() ? 2 : 1);
+                    
                     tracker_info->set_tracker_k1(distortionK1);
                     tracker_info->set_tracker_k2(distortionK2);
                     tracker_info->set_tracker_k3(distortionK3);
@@ -2356,6 +2362,7 @@ protected:
                 const auto &intrinsics= context.request->request_set_tracker_intrinsics();
 
                 tracker_view->setCameraIntrinsics(
+                    ITrackerInterface::PrimarySection, //###HipsterSloth $TODO
                     intrinsics.tracker_focal_lengths().x(), intrinsics.tracker_focal_lengths().y(),
                     intrinsics.tracker_principal_point().x(), intrinsics.tracker_principal_point().y(),
                     intrinsics.tracker_k1(), intrinsics.tracker_k2(), intrinsics.tracker_k3(),

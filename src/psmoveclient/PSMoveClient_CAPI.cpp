@@ -1177,14 +1177,28 @@ PSMResult PSM_CloseTrackerVideoStream(PSMTrackerID tracker_id)
     return result;
 }
 
-PSMResult PSM_GetTrackerVideoFrameBuffer(PSMTrackerID tracker_id, const unsigned char **out_buffer)
+PSMResult PSM_GetTrackerVideoFrameSectionCount(PSMTrackerID tracker_id, int *out_section_count)
+{
+    PSMResult result= PSMResult_Error;
+	assert(out_section_count != nullptr);
+
+    if (g_psm_client != nullptr && IS_VALID_TRACKER_INDEX(tracker_id))
+    {
+        *out_section_count= g_psm_client->get_video_frame_section_count(tracker_id);
+		result= PSMResult_Success;
+    }
+
+    return result;
+}
+
+PSMResult PSM_GetTrackerVideoFrameBuffer(PSMTrackerID tracker_id, PSMVideoFrameSection section_index, const unsigned char **out_buffer)
 {
     PSMResult result= PSMResult_Error;
 	assert(out_buffer != nullptr);
 
     if (g_psm_client != nullptr && IS_VALID_TRACKER_INDEX(tracker_id))
     {
-        const unsigned char *buffer= g_psm_client->get_video_frame_buffer(tracker_id);
+        const unsigned char *buffer= g_psm_client->get_video_frame_buffer(tracker_id, section_index);
 		if (buffer != nullptr)
 		{
 			*out_buffer= buffer;

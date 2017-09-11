@@ -204,7 +204,8 @@ struct CommonDeviceState
         SUPPORTED_CONTROLLER_TYPE_COUNT = Controller + 0x04,
         
         PS3EYE = TrackingCamera + 0x00,
-        SUPPORTED_CAMERA_TYPE_COUNT = TrackingCamera + 0x01,
+        VirtualStereoCamera = TrackingCamera + 0x01,
+        SUPPORTED_CAMERA_TYPE_COUNT = TrackingCamera + 0x02,
         
         Morpheus = HeadMountedDisplay + 0x00,
         VirtualHMD = HeadMountedDisplay + 0x01,
@@ -244,6 +245,9 @@ struct CommonDeviceState
             break;
         case PS3EYE:
             result = "PSEYE";
+            break;
+        case VirtualStereoCamera:
+            result = "VirtualStereoCamera";
             break;
         case Morpheus:
             result = "Morpheus";
@@ -516,6 +520,16 @@ public:
         SUPPORTED_DRIVER_TYPE_COUNT,
     };
 
+    enum eTrackerVideoSection
+    {
+        LeftSection = 0,
+        RightSection = 1,
+
+        PrimarySection = LeftSection,
+
+        MAX_SUPPORTED_SECTION_COUNT = 2
+    };
+
     // -- Getters
     // Returns the driver type being used by this camera
     virtual eDriverType getDriverType() const = 0;
@@ -526,8 +540,11 @@ public:
     // Returns the video frame size (used to compute frame buffer size)
     virtual bool getVideoFrameDimensions(int *out_width, int *out_height, int *out_stride) const = 0;
 
+    // Returns true if this device is a stereo camera
+    virtual bool getIsStereoCamera() const = 0;
+
     // Returns a pointer to the last video frame buffer captured
-    virtual const unsigned char *getVideoFrameBuffer() const = 0;
+    virtual const unsigned char *getVideoFrameBuffer(eTrackerVideoSection section) const = 0;
 
     static const char *getDriverTypeString(eDriverType device_type)
     {
@@ -573,11 +590,13 @@ public:
 	virtual double getGain() const = 0;
 
     virtual void getCameraIntrinsics(
+        ITrackerInterface::eTrackerVideoSection section,
         float &outFocalLengthX, float &outFocalLengthY,
         float &outPrincipalX, float &outPrincipalY,
         float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
         float &outDistortionP1, float &outDistortionP2) const = 0;
     virtual void setCameraIntrinsics(
+        ITrackerInterface::eTrackerVideoSection section,
         float focalLengthX, float focalLengthY,
         float principalX, float principalY,
         float distortionK1, float distortionK2, float distortionK3,

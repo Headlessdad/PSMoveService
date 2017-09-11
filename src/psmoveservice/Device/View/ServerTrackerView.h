@@ -20,6 +20,9 @@ public:
     ServerTrackerView(const int device_id);
     ~ServerTrackerView();
 
+    // Used by virtual trackers to allocate child tracker devices
+    static ITrackerInterface *allocate_tracker_interface(const class DeviceEnumerator *enumerator);
+
     bool open(const class DeviceEnumerator *enumerator) override;
     void close() override;
 
@@ -38,6 +41,9 @@ public:
 
     // Returns what type of driver this tracker uses
     ITrackerInterface::eDriverType getTrackerDriverType() const;
+
+    // Returns true if this is a stereo camera
+    bool getIsStereoCamera() const;
 
     // Returns the full usb device path for the controller
     std::string getUSBDevicePath() const;
@@ -78,7 +84,8 @@ public:
 		struct ControllerOpticalPoseEstimation *out_pose_estimate);
     
     std::vector<CommonDeviceScreenLocation> projectTrackerRelativePositions(
-                                const std::vector<CommonDevicePosition> &objectPositions) const;
+        const ITrackerInterface::eTrackerVideoSection section,
+        const std::vector<CommonDevicePosition> &objectPositions) const;
     
     CommonDeviceScreenLocation projectTrackerRelativePosition(const CommonDevicePosition *trackerRelativePosition) const;
     
@@ -108,11 +115,13 @@ public:
         const ServerTrackerView *other_tracker, const CommonDeviceTrackingProjection *other_tracker_relative_projection);
 
     void getCameraIntrinsics(
+        ITrackerInterface::eTrackerVideoSection section,
         float &outFocalLengthX, float &outFocalLengthY,
         float &outPrincipalX, float &outPrincipalY,
         float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
         float &outDistortionP1, float &outDistortionP2) const;
     void setCameraIntrinsics(
+        ITrackerInterface::eTrackerVideoSection section,
         float focalLengthX, float focalLengthY,
         float principalX, float principalY,
         float distortionK1, float distortionK2, float distortionK3,
@@ -139,6 +148,8 @@ public:
 	void getHMDTrackingColorPreset(const class ServerHMDView *controller, eCommonTrackingColorID color, CommonHSVColorRange *out_preset) const;
 
 protected:
+    void reallocate_shared_memory();
+    void reallocate_opencv_buffer_state();
     bool allocate_device_interface(const class DeviceEnumerator *enumerator) override;
     void free_device_interface() override;
     void publish_device_data_frame() override;
@@ -146,11 +157,22 @@ protected:
         const ServerTrackerView *tracker_view, const struct TrackerStreamInfo *stream_info,
         DeviceOutputDataFramePtr &data_frame);
 
+    bool computeProjectionForControllerInSection(
+        const ServerControllerView* tracked_controller,
+        const CommonDeviceTrackingShape *tracking_shape,
+        const ITrackerInterface::eTrackerVideoSection section,
+        ControllerOpticalPoseEstimation *out_pose_estimate);
+    bool computeProjectionForHmdInSection(
+        const ServerHMDView* tracked_controller,
+        const CommonDeviceTrackingShape *tracking_shape,
+        const ITrackerInterface::eTrackerVideoSection section,
+        HMDOpticalPoseEstimation *out_pose_estimate);
+
 private:
     char m_shared_memory_name[256];
     class SharedVideoFrameReadWriteAccessor *m_shared_memory_accesor;
     int m_shared_memory_video_stream_count;
-    class OpenCVBufferState *m_opencv_buffer_state;
+    class OpenCVBufferState *m_opencv_buffer_state[ITrackerInterface::MAX_SUPPORTED_SECTION_COUNT];
     ITrackerInterface *m_device;
 };
 

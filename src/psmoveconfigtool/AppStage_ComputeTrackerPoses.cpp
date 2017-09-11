@@ -791,7 +791,7 @@ void AppStage_ComputeTrackerPoses::update_tracker_video()
         if (PSM_PollTrackerVideoStream(tracker_id) == PSMResult_Success)
         {
             const unsigned char *buffer= nullptr;
-            if (PSM_GetTrackerVideoFrameBuffer(tracker_id, &buffer) == PSMResult_Success)
+            if (PSM_GetTrackerVideoFrameBuffer(tracker_id, PSMVideoFrameSection_Primary, &buffer) == PSMResult_Success)
             {
                 m_renderTrackerIter->second.textureAsset->copyBufferIntoTexture(buffer);
             }

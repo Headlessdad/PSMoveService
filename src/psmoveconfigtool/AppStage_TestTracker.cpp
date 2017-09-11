@@ -36,6 +36,8 @@ AppStage_TestTracker::AppStage_TestTracker(App *app)
     , m_menuState(AppStage_TestTracker::inactive)
     , m_bStreamIsActive(false)
     , m_tracker_view(nullptr)
+    , m_current_section(PSMVideoFrameSection_Primary)
+    , m_section_count(1)
     , m_video_texture(nullptr)
 { }
 
@@ -72,7 +74,8 @@ void AppStage_TestTracker::update()
         if (PSM_PollTrackerVideoStream(m_tracker_view->tracker_info.tracker_id) == PSMResult_Success)
         {
 			const unsigned char *buffer= nullptr;
-			if (PSM_GetTrackerVideoFrameBuffer(m_tracker_view->tracker_info.tracker_id, &buffer) == PSMResult_Success)
+			if (PSM_GetTrackerVideoFrameBuffer(
+                    m_tracker_view->tracker_info.tracker_id, m_current_section, &buffer) == PSMResult_Success)
 			{
 				m_video_texture->copyBufferIntoTexture(buffer);
 			}
@@ -109,9 +112,29 @@ void AppStage_TestTracker::renderUI()
     {
     case eTrackerMenuState::idle:
     {
+        const int panel_height= (m_section_count > 1) ? 80 : 50;
+
         ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f - k_panel_width / 2.f, 20.f));
-        ImGui::SetNextWindowSize(ImVec2(k_panel_width, 50));
+        ImGui::SetNextWindowSize(ImVec2(k_panel_width, panel_height));
         ImGui::Begin(k_window_title, nullptr, window_flags);
+
+        if (m_section_count > 1)
+        {
+            if (m_current_section == PSMVideoFrameSection_Left)
+            {
+                if (ImGui::Button("Show Right Frame"))
+                {
+                    m_current_section= PSMVideoFrameSection_Right;
+                }
+            }
+            else if (m_current_section == PSMVideoFrameSection_Right)
+            {
+                if (ImGui::Button("Show Left Frame"))
+                {
+                    m_current_section= PSMVideoFrameSection_Left;
+                }
+            }
+        }
 
         if (ImGui::Button("Return to Tracker Settings"))
         {
@@ -232,7 +255,8 @@ void AppStage_TestTracker::handle_tracker_start_stream_response(
             thisPtr->m_menuState = AppStage_TestTracker::idle;
 
             // Open the shared memory that the vidoe stream is being written to
-            if (PSM_OpenTrackerVideoStream(trackerView->tracker_info.tracker_id) == PSMResult_Success)
+            if (PSM_OpenTrackerVideoStream(trackerView->tracker_info.tracker_id) == PSMResult_Success &&
+                PSM_GetTrackerVideoFrameSectionCount(trackerView->tracker_info.tracker_id, &thisPtr->m_section_count) == PSMResult_Success)
             {
                 // Create a texture to render the video frame to
                 thisPtr->m_video_texture = new TextureAsset();

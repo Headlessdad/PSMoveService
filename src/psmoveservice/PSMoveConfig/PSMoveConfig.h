@@ -3,6 +3,7 @@
 
 //-- includes -----
 #include <string>
+#include <array>
 #include <boost/property_tree/ptree.hpp>
 
 //-- constants -----
@@ -38,6 +39,43 @@ public:
 	static void readColorPropertyPresetTable(
 		const boost::property_tree::ptree &pt,
 		struct CommonHSVColorRangeTable *table);
+
+    template <typename T, size_t s>
+    std::array<T, s> readArray(boost::property_tree::ptree const& pt,  boost::property_tree::ptree::key_type const& key)
+    {
+        std::array<T, s> r;
+        size_t write_count= 0;
+        for (auto& item : pt.get_child(key))
+        {
+            if (write_count < s)
+            {
+                r[write_count] = item.second.get_value<T>();
+                write_count++;
+            }
+            else
+            {
+                break;
+            }
+        }
+        return r;
+    }
+
+    template <typename T, size_t s>
+    void writeArray(
+        boost::property_tree::ptree& pt, 
+        boost::property_tree::ptree::key_type const& key,
+        const std::array<T, s> &values)
+    {
+        boost::property_tree::ptree ptArray;
+        boost::property_tree::ptree ptElement;
+
+        for (int i = 0; i < s; ++i)
+        {
+            ptElement.put_value(values[i]);
+            ptArray.push_back(std::make_pair("", ptElement));
+        }
+        pt.put_child(key, ptArray);
+    }
 
 	static void writeTrackingColor(boost::property_tree::ptree &pt, int tracking_color_id);
 	static int readTrackingColor(const boost::property_tree::ptree &pt);

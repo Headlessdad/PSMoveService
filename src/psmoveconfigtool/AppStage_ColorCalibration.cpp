@@ -260,7 +260,7 @@ void AppStage_ColorCalibration::update()
     {
         const unsigned char *video_buffer= nullptr;
         if (PSM_PollTrackerVideoStream(m_trackerView->tracker_info.tracker_id) == PSMResult_Success &&
-            PSM_GetTrackerVideoFrameBuffer(m_trackerView->tracker_info.tracker_id, &video_buffer) == PSMResult_Success)
+            PSM_GetTrackerVideoFrameBuffer(m_trackerView->tracker_info.tracker_id, PSMVideoFrameSection_Primary, &video_buffer) == PSMResult_Success)
         {
             const int frameWidth = static_cast<int>(m_trackerView->tracker_info.tracker_screen_dimensions.x);
             const int frameHeight = static_cast<int>(m_trackerView->tracker_info.tracker_screen_dimensions.y);

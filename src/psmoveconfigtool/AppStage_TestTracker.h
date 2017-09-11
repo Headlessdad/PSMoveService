@@ -52,6 +52,8 @@ private:
     eTrackerMenuState m_menuState;
     bool m_bStreamIsActive;
     PSMTracker *m_tracker_view;
+    PSMVideoFrameSection m_current_section;
+    int m_section_count;
     class TextureAsset *m_video_texture;
 };
 

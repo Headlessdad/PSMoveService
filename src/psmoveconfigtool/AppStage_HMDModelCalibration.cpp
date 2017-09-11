@@ -859,7 +859,10 @@ void AppStage_HMDModelCalibration::update_tracker_video()
 	{
 		const unsigned char *buffer= nullptr;
 
-		if (PSM_GetTrackerVideoFrameBuffer(trackerState.trackerView->tracker_info.tracker_id, &buffer) == PSMResult_Success)
+		if (PSM_GetTrackerVideoFrameBuffer(
+                trackerState.trackerView->tracker_info.tracker_id, 
+                PSMVideoFrameSection_Primary, 
+                &buffer) == PSMResult_Success)
 		{
 			trackerState.textureAsset->copyBufferIntoTexture(buffer);
 		}
