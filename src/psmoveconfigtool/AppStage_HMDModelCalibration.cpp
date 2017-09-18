@@ -282,7 +282,9 @@ public:
 			projections[point_index] = projectWorldPositionOnTracker(worldPosition, trackerView);
 		}
 
-		PSMVector2f tracker_size= trackerView->tracker_info.tracker_screen_dimensions;
+		PSMVector2f tracker_size;
+        PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &tracker_size);
+
 		drawPointCloudProjection(projections, point_count, 6.f, glm::vec3(0.f, 1.f, 0.f), tracker_size.x, tracker_size.y);
 	}
 
@@ -1196,12 +1198,12 @@ bool AppStage_HMDModelCalibration::setup_tracker_pair(const PSMTrackerList &trac
 			Eigen::Matrix3f E = R * S;
 
 			// Get the intrinsic matrices for A and B
-			PSMMatrix3f intrinsicA;
-			PSMMatrix3f intrinsicB;
-			PSM_GetTrackerIntrinsicMatrix(tracker_a_info->tracker_id, &intrinsicA);
-			PSM_GetTrackerIntrinsicMatrix(tracker_b_info->tracker_id, &intrinsicB);
-			Eigen::Matrix3f Ka= psm_matrix3f_to_eigen_matrix3(intrinsicA);
-			Eigen::Matrix3f Kb= psm_matrix3f_to_eigen_matrix3(intrinsicB);
+            PSMTrackerIntrinsics intrinsicA;
+            PSMTrackerIntrinsics intrinsicB;
+	        PSM_GetTrackerIntrinsics(tracker_a_info->tracker_id, &intrinsicA);
+            PSM_GetTrackerIntrinsics(tracker_b_info->tracker_id, &intrinsicB);
+			Eigen::Matrix3f Ka= psm_matrix3d_to_eigen_matrix3f(intrinsicA.intrinsics.mono.camera_matrix);
+			Eigen::Matrix3f Kb= psm_matrix3d_to_eigen_matrix3f(intrinsicB.intrinsics.mono.camera_matrix);
 
 			// Compute the fundamental matrix from camera A to camera B
 			m_trackerPairState->F_ab = Kb.inverse().transpose() * E * Ka.inverse();
@@ -1274,11 +1276,14 @@ void AppStage_HMDModelCalibration::handle_tracker_start_stream_response(
 		// Open the shared memory that the video stream is being written to
 		if (PSM_OpenTrackerVideoStream(trackerState.trackerView->tracker_info.tracker_id) == PSMResult_Success)
 		{
+            PSMVector2f screenSize;
+            PSM_GetTrackerScreenSize(trackerState.trackerView->tracker_info.tracker_id, &screenSize);
+
 			// Create a texture to render the video frame to
 			trackerState.textureAsset = new TextureAsset();
 			trackerState.textureAsset->init(
-				static_cast<unsigned int>(trackerState.trackerView->tracker_info.tracker_screen_dimensions.x),
-				static_cast<unsigned int>(trackerState.trackerView->tracker_info.tracker_screen_dimensions.y),
+				static_cast<unsigned int>(screenSize.x),
+				static_cast<unsigned int>(screenSize.y),
 				GL_RGB, // texture format
 				GL_BGR, // buffer format
 				nullptr);
@@ -1357,14 +1362,11 @@ static cv::Matx33f computeOpenCVCameraIntrinsicMatrix(const PSMTracker *tracker_
 	cv::Matx33f out;
 
 	const PSMClientTrackerInfo &tracker_info = tracker_view->tracker_info;
-	float F_PX = tracker_info.tracker_focal_lengths.x;
-	float F_PY = tracker_info.tracker_focal_lengths.y;
-	float PrincipalX = tracker_info.tracker_principal_point.x;
-	float PrincipalY = tracker_info.tracker_principal_point.y;
+    const PSMMatrix3d &camera_matrix= tracker_info.tracker_intrinsics.intrinsics.mono.camera_matrix;
 
-	out(0, 0) = F_PX; out(0, 1) = 0.f; out(0, 2) = PrincipalX;
-	out(1, 0) = 0.f; out(1, 1) = F_PY; out(1, 2) = PrincipalY;
-	out(2, 0) = 0.f; out(2, 1) = 0.f; out(2, 2) = 1.f;
+	out(0, 0) = camera_matrix.m[0][0]; out(0, 1) = camera_matrix.m[0][1]; out(0, 2) = camera_matrix.m[0][2];
+	out(1, 0) = camera_matrix.m[1][0]; out(1, 1) = camera_matrix.m[1][1]; out(1, 2) = camera_matrix.m[1][2];
+	out(2, 0) = camera_matrix.m[2][0]; out(2, 1) = camera_matrix.m[2][1]; out(2, 2) = camera_matrix.m[2][2];
 
 	return out;
 }

@@ -384,6 +384,33 @@ PSMQuatf PSM_QuatfNormalizeWithDefault(const PSMQuatf *q, const PSMQuatf *defaul
 	return PSM_QuatfSafeScalarDivide(q, PSM_QuatfLength(q), default_result);
 }
 
+// PSMMatrix3d Methods
+PSMMatrix3d PSM_Matrix3dCreate(const PSMVector3d *basis_x, const PSMVector3d *basis_y, const PSMVector3d *basis_z)
+{
+    PSMMatrix3d mat;
+
+    mat.m[0][0] = basis_x->x; mat.m[0][1] = basis_x->y; mat.m[0][2] = basis_x->z;
+    mat.m[1][0] = basis_y->x; mat.m[1][1] = basis_y->y; mat.m[1][2] = basis_y->z;
+    mat.m[2][0] = basis_z->x; mat.m[2][1] = basis_z->y; mat.m[2][2] = basis_z->z;
+
+    return mat;
+}
+
+PSMVector3d PSM_Matrix3dBasisX(const PSMMatrix3d *mat)
+{
+    return {mat->m[0][0], mat->m[0][1], mat->m[0][2]};
+}
+
+PSMVector3d PSM_Matrix3dBasisY(const PSMMatrix3d *mat)
+{
+	return {mat->m[1][0], mat->m[1][1], mat->m[1][2]};
+}
+
+PSMVector3d PSM_Matrix3dBasisZ(const PSMMatrix3d *mat)
+{
+	return {mat->m[2][0], mat->m[2][1], mat->m[2][2]};
+}
+
 // PSMMatrix3f Methods
 PSMMatrix3f PSM_Matrix3fCreate(const PSMVector3f *basis_x, const PSMVector3f *basis_y, const PSMVector3f *basis_z)
 {

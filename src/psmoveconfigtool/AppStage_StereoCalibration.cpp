@@ -1,7 +1,7 @@
 // Derived From example 11-1 of "Learning OpenCV: Computer Vision with the OpenCV Library" by Gary Bradski
 
 //-- includes -----
-#include "AppStage_DistortionCalibration.h"
+#include "AppStage_StereoCalibration.h"
 #include "AppStage_TrackerSettings.h"
 #include "AppStage_MainMenu.h"
 #include "AssetManager.h"
@@ -32,7 +32,7 @@
 #endif
 
 //-- statics ----
-const char *AppStage_DistortionCalibration::APP_STAGE_NAME = "DistortionCalibration";
+const char *AppStage_StereoCalibration::APP_STAGE_NAME = "StereoCalibration";
 
 //-- constants -----
 static const char *k_video_display_mode_names[] = {
@@ -59,8 +59,9 @@ static const char *k_video_display_mode_names[] = {
 class OpenCVBufferState
 {
 public:
-    OpenCVBufferState(const PSMClientTrackerInfo &_trackerInfo)
+    OpenCVBufferState(const PSMClientTrackerInfo &_trackerInfo, PSMVideoFrameSection _section)
         : trackerInfo(_trackerInfo)
+        , section(_section)
         , frameWidth(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_width))
         , frameHeight(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_height))
         , capturedBoardCount(0)
@@ -110,20 +111,31 @@ public:
 
     void resetCalibrationState()
     {
-        reprojectionError= 0.f;
+        PSMMatrix3d psm_camera_matrix;
+        PSMDistortionCoefficients psm_distortion_coeffs;
 
-        // Fill in the intrinsic matrix
-        intrinsic_matrix= psmove_matrix3x3_to_cv_mat33d(trackerInfo.tracker_intrinsics.intrinsics.mono.camera_matrix);
+        switch (section)
+        {
+        case PSMVideoFrameSection_Left:
+            psm_camera_matrix= trackerInfo.tracker_intrinsics.intrinsics.stereo.left_camera_matrix;
+            psm_distortion_coeffs= trackerInfo.tracker_intrinsics.intrinsics.stereo.left_distortion_coefficients;
+            break;
+        case PSMVideoFrameSection_Right:
+            psm_camera_matrix= trackerInfo.tracker_intrinsics.intrinsics.stereo.right_camera_matrix;
+            psm_distortion_coeffs= trackerInfo.tracker_intrinsics.intrinsics.stereo.right_distortion_coefficients;
+            break;
+        }
 
+        intrinsic_matrix= psmove_matrix3x3_to_cv_mat33d(psm_camera_matrix);
+        
         // Fill in the distortion coefficients
-        const PSMDistortionCoefficients &distortion= 
-            trackerInfo.tracker_intrinsics.intrinsics.mono.distortion_coefficients;
+        distortion_coeffs->at<double>(0, 0)= psm_distortion_coeffs.k1; 
+        distortion_coeffs->at<double>(1, 0)= psm_distortion_coeffs.k2;
+        distortion_coeffs->at<double>(2, 0)= psm_distortion_coeffs.p1;
+        distortion_coeffs->at<double>(3, 0)= psm_distortion_coeffs.p2;
+        distortion_coeffs->at<double>(4, 0)= psm_distortion_coeffs.k3;
 
-        distortion_coeffs->at<double>(0, 0)= distortion.k1; 
-        distortion_coeffs->at<double>(1, 0)= distortion.k2;
-        distortion_coeffs->at<double>(2, 0)= distortion.p1;
-        distortion_coeffs->at<double>(3, 0)= distortion.p2;
-        distortion_coeffs->at<double>(4, 0)= distortion.k3;
+        reprojectionError= 0.f;
 
         // Generate the distortion map that corresponds to the tracker's camera settings
         rebuildDistortionMap();
@@ -340,6 +352,7 @@ public:
     }
 
     const PSMClientTrackerInfo &trackerInfo;
+    PSMVideoFrameSection section;
     int frameWidth;
     int frameHeight;
 
@@ -368,20 +381,23 @@ public:
 };
 
 //-- public methods -----
-AppStage_DistortionCalibration::AppStage_DistortionCalibration(App *app)
+AppStage_StereoCalibration::AppStage_StereoCalibration(App *app)
     : AppStage(app)
-    , m_menuState(AppStage_DistortionCalibration::inactive)
-    , m_videoDisplayMode(AppStage_DistortionCalibration::eVideoDisplayMode::mode_bgr)
+    , m_menuState(AppStage_StereoCalibration::inactive)
+    , m_videoDisplayMode(AppStage_StereoCalibration::eVideoDisplayMode::mode_bgr)
 	, m_square_length_mm(DEFAULT_SQUARE_LEN_MM)
     , m_trackerExposure(0.0)
     , m_trackerGain(0.0)
     , m_bStreamIsActive(false)
     , m_tracker_view(nullptr)
-    , m_video_texture(nullptr)
-    , m_opencv_state(nullptr)
-{ }
+{ 
+    m_video_texture[0]= nullptr;
+    m_video_texture[1]= nullptr;
+    m_opencv_state[0]= nullptr;
+    m_opencv_state[1]= nullptr;
+}
 
-void AppStage_DistortionCalibration::enter()
+void AppStage_StereoCalibration::enter()
 {
     const AppStage_TrackerSettings *trackerSettings =
         m_app->getAppStage<AppStage_TrackerSettings>();
@@ -400,14 +416,20 @@ void AppStage_DistortionCalibration::enter()
 	request_tracker_start_stream();
 }
 
-void AppStage_DistortionCalibration::exit()
+void AppStage_StereoCalibration::exit()
 {
-    m_menuState = AppStage_DistortionCalibration::inactive;
+    m_menuState = AppStage_StereoCalibration::inactive;
 
-    if (m_opencv_state != nullptr)
+    if (m_opencv_state[PSMVideoFrameSection_Left] != nullptr)
     {
-        delete m_opencv_state;
-        m_opencv_state= nullptr;
+        delete m_opencv_state[PSMVideoFrameSection_Left];
+        m_opencv_state[PSMVideoFrameSection_Left]= nullptr;
+    }
+
+    if (m_opencv_state[PSMVideoFrameSection_Right] != nullptr)
+    {
+        delete m_opencv_state[PSMVideoFrameSection_Right];
+        m_opencv_state[PSMVideoFrameSection_Right]= nullptr;
     }
 
     // Revert unsaved modifications to the tracker settings
@@ -418,33 +440,51 @@ void AppStage_DistortionCalibration::exit()
     m_bStreamIsActive= false;
 }
 
-void AppStage_DistortionCalibration::update()
+inline PSMDistortionCoefficients cv_vec5_to_psm_distortion(const cv::Mat *cv_distortion_coeffs)
 {
-    if (m_menuState == AppStage_DistortionCalibration::capture ||
-        m_menuState == AppStage_DistortionCalibration::complete)
+    PSMDistortionCoefficients distortion_coeffs;
+    distortion_coeffs.k1= cv_distortion_coeffs->at<double>(0, 0);
+    distortion_coeffs.k2= cv_distortion_coeffs->at<double>(1, 0);
+    distortion_coeffs.p1= cv_distortion_coeffs->at<double>(2, 0);
+    distortion_coeffs.p2= cv_distortion_coeffs->at<double>(3, 0);
+    distortion_coeffs.k3= cv_distortion_coeffs->at<double>(4, 0);
+
+    return distortion_coeffs;
+}
+
+void AppStage_StereoCalibration::update()
+{
+    if (m_menuState == AppStage_StereoCalibration::capture ||
+        m_menuState == AppStage_StereoCalibration::complete)
     {
         assert(m_video_texture != nullptr);
 
         // Try and read the next video frame from shared memory
         if (PSM_PollTrackerVideoStream(m_tracker_view->tracker_info.tracker_id) == PSMResult_Success)
         {
-            const unsigned char *video_frame_buffer= nullptr;
-			if (PSM_GetTrackerVideoFrameBuffer(m_tracker_view->tracker_info.tracker_id, PSMVideoFrameSection_Primary, &video_frame_buffer) == PSMResult_Success)
+            const unsigned char *left_video_frame_buffer= nullptr;
+            const unsigned char *right_video_frame_buffer= nullptr;
+			if (PSM_GetTrackerVideoFrameBuffer(m_tracker_view->tracker_info.tracker_id, PSMVideoFrameSection_Left, &left_video_frame_buffer) == PSMResult_Success &&
+                PSM_GetTrackerVideoFrameBuffer(m_tracker_view->tracker_info.tracker_id, PSMVideoFrameSection_Right, &right_video_frame_buffer) == PSMResult_Success)
 			{
 				// Update the video frame buffers
-				m_opencv_state->applyVideoFrame(video_frame_buffer);
+				m_opencv_state[PSMVideoFrameSection_Left]->applyVideoFrame(left_video_frame_buffer);
+                m_opencv_state[PSMVideoFrameSection_Right]->applyVideoFrame(right_video_frame_buffer);
 
 				// Update the video frame display texture
 				switch (m_videoDisplayMode)
 				{
-				case AppStage_DistortionCalibration::mode_bgr:
-					m_video_texture->copyBufferIntoTexture(m_opencv_state->bgrSourceBuffer->data);
+				case AppStage_StereoCalibration::mode_bgr:
+					m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Left]->bgrSourceBuffer->data);
+                    m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Right]->bgrSourceBuffer->data);
 					break;
-				case AppStage_DistortionCalibration::mode_grayscale:
-					m_video_texture->copyBufferIntoTexture(m_opencv_state->gsBGRBuffer->data);
+				case AppStage_StereoCalibration::mode_grayscale:
+					m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Left]->gsBGRBuffer->data);
+                    m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Right]->gsBGRBuffer->data);
 					break;
-				case AppStage_DistortionCalibration::mode_undistored:
-					m_video_texture->copyBufferIntoTexture(m_opencv_state->bgrUndistortBuffer->data);
+				case AppStage_StereoCalibration::mode_undistored:
+					m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Left]->bgrUndistortBuffer->data);
+                    m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Right]->bgrUndistortBuffer->data);
 					break;
 				default:
 					assert(0 && "unreachable");
@@ -452,93 +492,102 @@ void AppStage_DistortionCalibration::update()
 				}
 			}
 
-            if (m_menuState == AppStage_DistortionCalibration::capture)
+            if (m_menuState == AppStage_StereoCalibration::capture)
             {
                 
                 // Update the chess board capture state
                 ImGuiIO io_state = ImGui::GetIO();
-                m_opencv_state->findAndAppendNewChessBoard(io_state.KeysDown[32]);
+                m_opencv_state[PSMVideoFrameSection_Left]->findAndAppendNewChessBoard(io_state.KeysDown[32]);
+                m_opencv_state[PSMVideoFrameSection_Right]->findAndAppendNewChessBoard(io_state.KeysDown[32]);
 
-                if (m_opencv_state->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT)
+                if (m_opencv_state[PSMVideoFrameSection_Left]->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT &&
+                    m_opencv_state[PSMVideoFrameSection_Right]->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT)
                 {
-                    
-                    m_opencv_state->computeCameraCalibration(m_square_length_mm); //Will update intrinsic_matrix and distortion_coeffs
+                    //Will update intrinsic_matrix and distortion_coeffs
+                    m_opencv_state[PSMVideoFrameSection_Left]->computeCameraCalibration(m_square_length_mm); 
+                    m_opencv_state[PSMVideoFrameSection_Right]->computeCameraCalibration(m_square_length_mm); 
 
-                    const cv::Matx33d cv_intrinsic_matrix= m_opencv_state->intrinsic_matrix;
-                    const cv::Mat *cv_distortion_coeffs= m_opencv_state->distortion_coeffs;
 
-                    const PSMMatrix3d intrinsic_matrix= cv_mat33d_to_psmove_matrix3x3(cv_intrinsic_matrix);
+                    const cv::Matx33d cv_left_intrinsic_matrix= m_opencv_state[PSMVideoFrameSection_Left]->intrinsic_matrix;
+                    const cv::Matx33d cv_right_intrinsic_matrix= m_opencv_state[PSMVideoFrameSection_Right]->intrinsic_matrix;
+                    const cv::Mat *cv_left_distortion_coeffs= m_opencv_state[PSMVideoFrameSection_Left]->distortion_coeffs;
+                    const cv::Mat *cv_right_distortion_coeffs= m_opencv_state[PSMVideoFrameSection_Right]->distortion_coeffs;
 
-                    PSMDistortionCoefficients distortion_coeffs;
-                    distortion_coeffs.k1= cv_distortion_coeffs->at<double>(0, 0);
-                    distortion_coeffs.k2= cv_distortion_coeffs->at<double>(1, 0);
-                    distortion_coeffs.p1= cv_distortion_coeffs->at<double>(2, 0);
-                    distortion_coeffs.p2= cv_distortion_coeffs->at<double>(3, 0);
-                    distortion_coeffs.k3= cv_distortion_coeffs->at<double>(4, 0);
+                    const PSMMatrix3d left_intrinsic_matrix= cv_mat33d_to_psmove_matrix3x3(cv_left_intrinsic_matrix);
+                    const PSMMatrix3d right_intrinsic_matrix= cv_mat33d_to_psmove_matrix3x3(cv_right_intrinsic_matrix);
+
+                    const PSMDistortionCoefficients left_distortion_coeffs= cv_vec5_to_psm_distortion(cv_left_distortion_coeffs);
+                    const PSMDistortionCoefficients right_distortion_coeffs= cv_vec5_to_psm_distortion(cv_right_distortion_coeffs);
 
                     // Update the camera intrinsics for this camera
-                    request_tracker_set_intrinsic(intrinsic_matrix, distortion_coeffs);
+                    request_tracker_set_intrinsic(
+                        left_intrinsic_matrix, right_intrinsic_matrix,
+                        left_distortion_coeffs, right_distortion_coeffs);
 
-                    m_videoDisplayMode= AppStage_DistortionCalibration::mode_undistored;
-                    m_menuState= AppStage_DistortionCalibration::complete;
+                    m_videoDisplayMode= AppStage_StereoCalibration::mode_undistored;
+                    m_menuState= AppStage_StereoCalibration::complete;
                 }
             }
         }
     }
 }
 
-void AppStage_DistortionCalibration::render()
+void AppStage_StereoCalibration::render()
 {
-    if (m_menuState == AppStage_DistortionCalibration::capture ||
-        m_menuState == AppStage_DistortionCalibration::complete)
+    if (m_menuState == AppStage_StereoCalibration::capture ||
+        m_menuState == AppStage_StereoCalibration::complete)
     {
-        assert(m_video_texture != nullptr);
-        unsigned int texture_id = m_video_texture->texture_id;
+        // TODO: Render the calibration in stereo mode
+        assert(m_video_texture[PSMVideoFrameSection_Left] != nullptr);
+        assert(m_video_texture[PSMVideoFrameSection_Right] != nullptr);
+        unsigned int left_texture_id = m_video_texture[PSMVideoFrameSection_Left]->texture_id;
+        unsigned int right_texture_id = m_video_texture[PSMVideoFrameSection_Right]->texture_id;
 
-        if (texture_id != 0)
+        if (left_texture_id != 0 && right_texture_id != 0)
         {
-            drawFullscreenTexture(texture_id);
+            drawFullscreenTexture(left_texture_id);
+            //drawFullscreenStereoTexture(left_texture_id, right_texture_id);
         }
 
-        if (m_menuState == AppStage_DistortionCalibration::capture)
+        if (m_menuState == AppStage_StereoCalibration::capture)
         {
-            float frameWidth= static_cast<float>(m_opencv_state->frameWidth);
-            float frameHeight= static_cast<float>(m_opencv_state->frameHeight);
+            float frameWidth= static_cast<float>(m_opencv_state[PSMVideoFrameSection_Left]->frameWidth);
+            float frameHeight= static_cast<float>(m_opencv_state[PSMVideoFrameSection_Left]->frameHeight);
 
             // Draw the last valid capture chessboard
-            if (m_opencv_state->lastValidImagePoints.size() > 0)
+            if (m_opencv_state[PSMVideoFrameSection_Left]->lastValidImagePoints.size() > 0)
             {
                 drawOpenCVChessBoard(
                     frameWidth, frameHeight, 
-                    reinterpret_cast<float *>(m_opencv_state->lastValidImagePoints.data()), // cv::point2f is just two floats 
-                    static_cast<int>(m_opencv_state->lastValidImagePoints.size()),
+                    reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Left]->lastValidImagePoints.data()), // cv::point2f is just two floats 
+                    static_cast<int>(m_opencv_state[PSMVideoFrameSection_Left]->lastValidImagePoints.size()),
                     true);
             }            
 
             // Draw the most recently capture chessboard
-            if (m_opencv_state->currentImagePoints.size() > 0)
+            if (m_opencv_state[PSMVideoFrameSection_Left]->currentImagePoints.size() > 0)
             {
                 drawOpenCVChessBoard(
                     frameWidth, frameHeight, 
-                    reinterpret_cast<float *>(m_opencv_state->currentImagePoints.data()), // cv::point2f is just two floats 
-                    static_cast<int>(m_opencv_state->currentImagePoints.size()),
-                    m_opencv_state->bCurrentImagePointsValid);
+                    reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Left]->currentImagePoints.data()), // cv::point2f is just two floats 
+                    static_cast<int>(m_opencv_state[PSMVideoFrameSection_Left]->currentImagePoints.size()),
+                    m_opencv_state[PSMVideoFrameSection_Left]->bCurrentImagePointsValid);
             }
 
             // Draw the outlines of all of the chess boards 
-            if (m_opencv_state->quadList.size() > 0)
+            if (m_opencv_state[PSMVideoFrameSection_Left]->quadList.size() > 0)
             {
                 drawQuadList2d(
                     frameWidth, frameHeight, 
                     glm::vec3(1.f, 1.f, 0.f), 
-                        reinterpret_cast<float *>(m_opencv_state->quadList.data()), // cv::point2f is just two floats 
-                        static_cast<int>(m_opencv_state->quadList.size()));
+                        reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Left]->quadList.data()), // cv::point2f is just two floats 
+                        static_cast<int>(m_opencv_state[PSMVideoFrameSection_Left]->quadList.size()));
             }
         }
     }
 }
 
-void AppStage_DistortionCalibration::renderUI()
+void AppStage_StereoCalibration::renderUI()
 {
     const float k_panel_width = 200.f;
     const char *k_window_title = "Distortion Calibration";
@@ -677,21 +726,26 @@ void AppStage_DistortionCalibration::renderUI()
                 ImGui::SetNextWindowSize(ImVec2(k_panel_width, 110));
                 ImGui::Begin(k_window_title, nullptr, window_flags);
 
-                const float samplePercentage= 
-                    static_cast<float>(m_opencv_state->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
-                ImGui::ProgressBar(samplePercentage, ImVec2(k_panel_width - 20, 20));
+                const float leftSamplePercentage= 
+                    static_cast<float>(m_opencv_state[PSMVideoFrameSection_Left]->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
+                const float rightSamplePercentage= 
+                    static_cast<float>(m_opencv_state[PSMVideoFrameSection_Right]->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
+                ImGui::ProgressBar(std::min(leftSamplePercentage, rightSamplePercentage), ImVec2(k_panel_width - 20, 20));
 
                 if (ImGui::Button("Restart"))
                 {
-                    m_opencv_state->resetCaptureState();
-                    m_opencv_state->resetCalibrationState();
+                    m_opencv_state[PSMVideoFrameSection_Left]->resetCaptureState();
+                    m_opencv_state[PSMVideoFrameSection_Right]->resetCaptureState();
+                    m_opencv_state[PSMVideoFrameSection_Left]->resetCalibrationState();
+                    m_opencv_state[PSMVideoFrameSection_Right]->resetCalibrationState();
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel"))
                 {
                     request_exit();
                 }
-                if (m_opencv_state->bCurrentImagePointsValid)
+                if (m_opencv_state[PSMVideoFrameSection_Left]->bCurrentImagePointsValid &&
+                    m_opencv_state[PSMVideoFrameSection_Right]->bCurrentImagePointsValid)
                 {
                     ImGui::Text("Press spacebar to capture");
                 }
@@ -707,7 +761,9 @@ void AppStage_DistortionCalibration::renderUI()
             ImGui::Begin(k_window_title, nullptr, window_flags);
 
             ImGui::Text("Calibration complete!");
-            ImGui::Text("Error: %f", m_opencv_state->reprojectionError);
+            ImGui::Text("Error: (L:%f, R:%f)", 
+                m_opencv_state[PSMVideoFrameSection_Left]->reprojectionError,
+                m_opencv_state[PSMVideoFrameSection_Right]->reprojectionError);
 
             if (ImGui::Button("Ok"))
             {
@@ -716,9 +772,11 @@ void AppStage_DistortionCalibration::renderUI()
 
             if (ImGui::Button("Redo Calibration"))
             {
-                m_opencv_state->resetCaptureState();
-                m_opencv_state->resetCalibrationState();
-                m_videoDisplayMode= AppStage_DistortionCalibration::mode_bgr;
+                m_opencv_state[PSMVideoFrameSection_Left]->resetCaptureState();
+                m_opencv_state[PSMVideoFrameSection_Right]->resetCaptureState();
+                m_opencv_state[PSMVideoFrameSection_Left]->resetCalibrationState();
+                m_opencv_state[PSMVideoFrameSection_Right]->resetCalibrationState();
+                m_videoDisplayMode= AppStage_StereoCalibration::mode_bgr;
                 m_menuState= eMenuState::capture;
             }
 
@@ -798,26 +856,26 @@ void AppStage_DistortionCalibration::renderUI()
     }
 }
 
-void AppStage_DistortionCalibration::request_tracker_start_stream()
+void AppStage_StereoCalibration::request_tracker_start_stream()
 {
-    if (m_menuState != AppStage_DistortionCalibration::pendingTrackerStartStreamRequest)
+    if (m_menuState != AppStage_StereoCalibration::pendingTrackerStartStreamRequest)
     {
-        m_menuState = AppStage_DistortionCalibration::pendingTrackerStartStreamRequest;
+        m_menuState = AppStage_StereoCalibration::pendingTrackerStartStreamRequest;
 
         // Tell the psmove service that we want to start streaming data from the tracker
 		PSMRequestID requestID;
 		PSM_StartTrackerDataStreamAsync(
 			m_tracker_view->tracker_info.tracker_id, 
 			&requestID);
-		PSM_RegisterCallback(requestID, AppStage_DistortionCalibration::handle_tracker_start_stream_response, this);
+		PSM_RegisterCallback(requestID, AppStage_StereoCalibration::handle_tracker_start_stream_response, this);
     }
 }
 
-void AppStage_DistortionCalibration::handle_tracker_start_stream_response(
+void AppStage_StereoCalibration::handle_tracker_start_stream_response(
     const PSMResponseMessage *response,
     void *userdata)
 {
-    AppStage_DistortionCalibration *thisPtr = static_cast<AppStage_DistortionCalibration *>(userdata);
+    AppStage_StereoCalibration *thisPtr = static_cast<AppStage_StereoCalibration *>(userdata);
 
     switch (response->result_code)
     {
@@ -831,12 +889,21 @@ void AppStage_DistortionCalibration::handle_tracker_start_stream_response(
             if (PSM_OpenTrackerVideoStream(trackerView->tracker_info.tracker_id) == PSMResult_Success)
             {
                 const PSMClientTrackerInfo &trackerInfo= trackerView->tracker_info;
-                const int width= static_cast<int>(trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_width);
-                const int height= static_cast<int>(trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_height);
+                const PSMStereoTrackerIntrinsics &trackerIntrinsics= trackerInfo.tracker_intrinsics.intrinsics.stereo;
+
+                const int width= static_cast<int>(trackerIntrinsics.pixel_width);
+                const int height= static_cast<int>(trackerIntrinsics.pixel_height);
 
                 // Create a texture to render the video frame to
-                thisPtr->m_video_texture = new TextureAsset();
-                thisPtr->m_video_texture->init(
+                thisPtr->m_video_texture[PSMVideoFrameSection_Left] = new TextureAsset();
+                thisPtr->m_video_texture[PSMVideoFrameSection_Left]->init(
+                    width, 
+                    height,
+                    GL_RGB, // texture format
+                    GL_BGR, // buffer format
+                    nullptr);
+                thisPtr->m_video_texture[PSMVideoFrameSection_Right] = new TextureAsset();
+                thisPtr->m_video_texture[PSMVideoFrameSection_Right]->init(
                     width, 
                     height,
                     GL_RGB, // texture format
@@ -844,22 +911,23 @@ void AppStage_DistortionCalibration::handle_tracker_start_stream_response(
                     nullptr);
 
                 // Allocate an opencv buffer 
-                thisPtr->m_opencv_state = new OpenCVBufferState(trackerInfo);
+                thisPtr->m_opencv_state[PSMVideoFrameSection_Left] = new OpenCVBufferState(trackerInfo, PSMVideoFrameSection_Left);
+                thisPtr->m_opencv_state[PSMVideoFrameSection_Right] = new OpenCVBufferState(trackerInfo, PSMVideoFrameSection_Right);
 
 				// Warn the user if they are about to change the distortion calibration settings for the PS3EYE
 				if (trackerInfo.tracker_type == PSMTrackerType::PSMTracker_PS3Eye)
 				{
-					thisPtr->m_menuState = AppStage_DistortionCalibration::showWarning;
+					thisPtr->m_menuState = AppStage_StereoCalibration::showWarning;
 				}
 				else
 				{
 					// Start capturing chess boards
-					thisPtr->m_menuState = AppStage_DistortionCalibration::enterBoardSettings;
+					thisPtr->m_menuState = AppStage_StereoCalibration::enterBoardSettings;
 				}
             }
             else
             {
-                thisPtr->m_menuState = AppStage_DistortionCalibration::failedTrackerOpenStreamRequest;
+                thisPtr->m_menuState = AppStage_StereoCalibration::failedTrackerOpenStreamRequest;
             }
         } break;
 
@@ -867,29 +935,29 @@ void AppStage_DistortionCalibration::handle_tracker_start_stream_response(
     case PSMResult_Canceled:
 	case PSMResult_Timeout:
         {
-            thisPtr->m_menuState = AppStage_DistortionCalibration::failedTrackerStartStreamRequest;
+            thisPtr->m_menuState = AppStage_StereoCalibration::failedTrackerStartStreamRequest;
         } break;
     }
 }
 
-void AppStage_DistortionCalibration::request_tracker_stop_stream()
+void AppStage_StereoCalibration::request_tracker_stop_stream()
 {
-    if (m_bStreamIsActive && m_menuState != AppStage_DistortionCalibration::pendingTrackerStopStreamRequest)
+    if (m_bStreamIsActive && m_menuState != AppStage_StereoCalibration::pendingTrackerStopStreamRequest)
     {
-        m_menuState = AppStage_DistortionCalibration::pendingTrackerStopStreamRequest;
+        m_menuState = AppStage_StereoCalibration::pendingTrackerStopStreamRequest;
 
         // Tell the psmove service that we want to stop streaming data from the tracker
 		PSMRequestID request_id;
 		PSM_StopTrackerDataStreamAsync(m_tracker_view->tracker_info.tracker_id, &request_id);
-		PSM_RegisterCallback(request_id, AppStage_DistortionCalibration::handle_tracker_stop_stream_response, this);
+		PSM_RegisterCallback(request_id, AppStage_StereoCalibration::handle_tracker_stop_stream_response, this);
     }
 }
 
-void AppStage_DistortionCalibration::handle_tracker_stop_stream_response(
+void AppStage_StereoCalibration::handle_tracker_stop_stream_response(
     const PSMResponseMessage *response,
     void *userdata)
 {
-    AppStage_DistortionCalibration *thisPtr = static_cast<AppStage_DistortionCalibration *>(userdata);
+    AppStage_StereoCalibration *thisPtr = static_cast<AppStage_StereoCalibration *>(userdata);
 
     // In either case consider the stream as now inactive
     thisPtr->m_bStreamIsActive = false;
@@ -898,7 +966,7 @@ void AppStage_DistortionCalibration::handle_tracker_stop_stream_response(
     {
     case PSMResult_Success:
         {
-            thisPtr->m_menuState = AppStage_DistortionCalibration::inactive;
+            thisPtr->m_menuState = AppStage_StereoCalibration::inactive;
 
             // Close the shared memory buffer
 			PSM_CloseTrackerVideoStream(thisPtr->m_tracker_view->tracker_info.tracker_id);
@@ -906,8 +974,10 @@ void AppStage_DistortionCalibration::handle_tracker_stop_stream_response(
             // Free the texture we were rendering to
             if (thisPtr->m_video_texture != nullptr)
             {
-                delete thisPtr->m_video_texture;
-                thisPtr->m_video_texture = nullptr;
+                delete thisPtr->m_video_texture[PSMVideoFrameSection_Left];
+                delete thisPtr->m_video_texture[PSMVideoFrameSection_Right];
+                thisPtr->m_video_texture[PSMVideoFrameSection_Left] = nullptr;
+                thisPtr->m_video_texture[PSMVideoFrameSection_Right] = nullptr;
             }
 
             // After closing the stream, we should go back to the tracker settings
@@ -918,12 +988,12 @@ void AppStage_DistortionCalibration::handle_tracker_stop_stream_response(
     case PSMResult_Canceled:
 	case PSMResult_Timeout:
         {
-            thisPtr->m_menuState = AppStage_DistortionCalibration::failedTrackerStopStreamRequest;
+            thisPtr->m_menuState = AppStage_StereoCalibration::failedTrackerStopStreamRequest;
         } break;
     }
 }
 
-void AppStage_DistortionCalibration::request_tracker_set_temp_gain(float gain)
+void AppStage_StereoCalibration::request_tracker_set_temp_gain(float gain)
 {
     m_trackerGain= gain;
 
@@ -937,7 +1007,7 @@ void AppStage_DistortionCalibration::request_tracker_set_temp_gain(float gain)
     PSM_SendOpaqueRequest(&request, nullptr);
 }
 
-void AppStage_DistortionCalibration::request_tracker_set_temp_exposure(float exposure)
+void AppStage_StereoCalibration::request_tracker_set_temp_exposure(float exposure)
 {
     m_trackerExposure= exposure;
 
@@ -980,51 +1050,57 @@ inline void psm_matrix3d_to_protocol_mat33(
     result->set_m20(m.m[2][0]); result->set_m21(m.m[2][1]); result->set_m22(m.m[2][2]);
 }
 
-void AppStage_DistortionCalibration::request_tracker_set_intrinsic(
-    const PSMMatrix3d &camera_matrix,
-    const PSMDistortionCoefficients &distortion_coefficients)
+void AppStage_StereoCalibration::request_tracker_set_intrinsic(
+    const PSMMatrix3d &left_camera_matrix, 
+    const PSMMatrix3d &right_camera_matrix,
+    const PSMDistortionCoefficients &left_distortion_coefficients,
+    const PSMDistortionCoefficients &right_distortion_coefficients)
 {
-    PSMMonoTrackerIntrinsics &old_mono_intrinsics= m_tracker_view->tracker_info.tracker_intrinsics.intrinsics.mono;
+    PSMStereoTrackerIntrinsics &old_stereo_intrinsics= m_tracker_view->tracker_info.tracker_intrinsics.intrinsics.stereo;
 
-    float frameWidth= old_mono_intrinsics.pixel_width;
-    float frameHeight= old_mono_intrinsics.pixel_height;
+    float frameWidth= old_stereo_intrinsics.pixel_width;
+    float frameHeight= old_stereo_intrinsics.pixel_height;
                                         
-    const float f_x= static_cast<float>(camera_matrix.m[0][0]);
-    const float f_y= static_cast<float>(camera_matrix.m[1][1]);
-    const float p_x= static_cast<float>(camera_matrix.m[0][2]);
-    const float p_y= static_cast<float>(camera_matrix.m[1][2]);
-
-    double fovx = 2 * atan(frameWidth / (2 * f_x)) * 180.0 / CV_PI;
-    double fovy = 2 * atan(frameHeight / (2 * f_y)) * 180.0 / CV_PI;
-    
-    //CLIENT_LOG_INFO("request_tracker_set_intrinsic") << "Manual fov x: " << fovx << "; y: " << fovy << std::endl;
-
     // Update the intrinsic state on the tracker info
     // so that this becomes the new reset point.
-    old_mono_intrinsics.camera_matrix= camera_matrix;
-    old_mono_intrinsics.distortion_coefficients= distortion_coefficients;
+    old_stereo_intrinsics.left_camera_matrix= left_camera_matrix;
+    old_stereo_intrinsics.right_camera_matrix= right_camera_matrix;
+    old_stereo_intrinsics.left_distortion_coefficients= left_distortion_coefficients;
+    old_stereo_intrinsics.right_distortion_coefficients= right_distortion_coefficients;
 
     // Build the tracker intrinsic request to 
     RequestPtr request(new PSMoveProtocol::Request());
     request->set_type(PSMoveProtocol::Request_RequestType_SET_TRACKER_INTRINSICS);
     request->mutable_request_set_tracker_intrinsics()->set_tracker_id(m_tracker_view->tracker_info.tracker_id);
 
-    PSMoveProtocol::TrackerIntrinsics_MonoIntrinics *new_mono_intrinsics= 
-        request->mutable_request_set_tracker_intrinsics()->mutable_tracker_intrinsics()->mutable_mono_intrinsics();
+    PSMoveProtocol::TrackerIntrinsics_StereoIntrinsics *new_stereo_intrinsics= 
+        request->mutable_request_set_tracker_intrinsics()->mutable_tracker_intrinsics()->mutable_stereo_intrinsics();
 
-    new_mono_intrinsics->mutable_tracker_screen_dimensions()->set_x(frameWidth);
-    new_mono_intrinsics->mutable_tracker_screen_dimensions()->set_y(frameHeight);
-    new_mono_intrinsics->set_hfov(old_mono_intrinsics.hfov);
-    new_mono_intrinsics->set_vfov(old_mono_intrinsics.vfov);
-    new_mono_intrinsics->set_znear(old_mono_intrinsics.znear);
-    new_mono_intrinsics->set_zfar(old_mono_intrinsics.zfar);
-    psm_matrix3d_to_protocol_mat33(camera_matrix, new_mono_intrinsics->mutable_camera_matrix());
-    psm_distortion_to_protocol_distortion(distortion_coefficients, new_mono_intrinsics->mutable_distortion_coefficients());
+    new_stereo_intrinsics->mutable_tracker_screen_dimensions()->set_x(frameWidth);
+    new_stereo_intrinsics->mutable_tracker_screen_dimensions()->set_y(frameHeight);
+    new_stereo_intrinsics->set_hfov(old_stereo_intrinsics.hfov);
+    new_stereo_intrinsics->set_vfov(old_stereo_intrinsics.vfov);
+    new_stereo_intrinsics->set_znear(old_stereo_intrinsics.znear);
+    new_stereo_intrinsics->set_zfar(old_stereo_intrinsics.zfar);
+    psm_matrix3d_to_protocol_mat33(left_camera_matrix, new_stereo_intrinsics->mutable_left_camera_matrix());
+    psm_matrix3d_to_protocol_mat33(right_camera_matrix, new_stereo_intrinsics->mutable_right_camera_matrix());
+    psm_distortion_to_protocol_distortion(left_distortion_coefficients, new_stereo_intrinsics->mutable_left_distortion_coefficients());
+    psm_distortion_to_protocol_distortion(right_distortion_coefficients, new_stereo_intrinsics->mutable_right_distortion_coefficients());
+
+    //TODO
+	//DoubleMatrix33 left_rectification_rotation;
+	//DoubleMatrix33 right_rectification_rotation
+	//DoubleMatrix34 left_rectification_projection;
+	//DoubleMatrix34 right_rectification_projection;
+	//DoubleMatrix33 rotation_between_cameras;
+	//DoubleVector translation_between_cameras;
+	//DoubleMatrix33 essential_matrix;
+	//DoubleMatrix33 fundamental_matrix;
 
     PSM_SendOpaqueRequest(&request, nullptr);
 }
 
-void AppStage_DistortionCalibration::request_tracker_reload_settings()
+void AppStage_StereoCalibration::request_tracker_reload_settings()
 {
     RequestPtr request(new PSMoveProtocol::Request());
     request->set_type(PSMoveProtocol::Request_RequestType_RELOAD_TRACKER_SETTINGS);
@@ -1033,7 +1109,7 @@ void AppStage_DistortionCalibration::request_tracker_reload_settings()
     PSM_SendOpaqueRequest(&request, nullptr);
 }
 
-void AppStage_DistortionCalibration::request_exit()
+void AppStage_StereoCalibration::request_exit()
 {
     if (m_bStreamIsActive)
     {

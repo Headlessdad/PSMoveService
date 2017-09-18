@@ -2,6 +2,7 @@
 #define DEVICE_INTERFACE_H
 
 // -- includes -----
+#include <array>
 #include <string>
 #include <tuple>
 
@@ -412,6 +413,71 @@ struct CommonDeviceTrackingProjection
     } basic;
 };
 
+struct CommonDistortionCoefficients
+{
+    double k1;
+    double k2;
+    double k3;
+    double p1;
+    double p2;
+};
+
+struct CommonMonoTrackerIntrinsics 
+{
+    float pixel_width, pixel_height;
+    float hfov, vfov;
+    float znear, zfar;
+    CommonDistortionCoefficients distortion_coefficients;
+    std::array<double, 3*3> camera_matrix;
+
+    void init_camera_matrix(
+        double F_PX, double F_PY,
+        double PrincipalX, double PrincipalY)
+    {
+        camera_matrix[0]= F_PX; camera_matrix[1]= 0.f;  camera_matrix[2]= PrincipalX;
+        camera_matrix[3]= 0.f;  camera_matrix[4]= F_PY; camera_matrix[5]= PrincipalY;
+        camera_matrix[6]= 0.f;  camera_matrix[7]= 0.f;  camera_matrix[8]= 1.f;
+    }
+};
+
+struct CommonStereoTrackerIntrinsics
+{
+    // Keep these in sync with CommonMonoTrackerIntrinsics
+    float pixel_width, pixel_height;
+    float hfov, vfov;
+    float znear, zfar;
+    CommonDistortionCoefficients left_distortion_coefficients;
+    std::array<double, 3*3> left_camera_matrix;
+    // Keep these in sync with CommonMonoTrackerIntrinsics
+
+    CommonDistortionCoefficients right_distortion_coefficients;
+    std::array<double, 3*3> right_camera_matrix;
+    std::array<double, 3*3> left_rectification_rotation;
+    std::array<double, 3*3> right_rectification_rotation;
+    std::array<double, 3*4> left_rectification_projection;
+    std::array<double, 3*4> right_rectification_projection;
+    std::array<double, 3*3> rotation_between_cameras;
+    std::array<double, 3> translation_between_cameras;
+    std::array<double, 3*3> essential_matrix;
+    std::array<double, 3*3> fundamental_matrix;
+};
+
+struct CommonTrackerIntrinsics
+{
+	enum eTrackerIntrinsicsType
+	{
+		MONO_TRACKER_INTRINSICS = 0,
+		STEREO_TRACKER_INTRINSICS = 1,
+	};
+
+    union {
+        CommonMonoTrackerIntrinsics mono_intrinsics;
+        CommonStereoTrackerIntrinsics stereo_intrinsics;
+    };
+
+    eTrackerIntrinsicsType intrinsics_type;
+};
+
 /// Abstract base class for any device interface. Further defined in specific device abstractions.
 class IDeviceInterface
 {
@@ -589,18 +655,8 @@ public:
 	virtual void setGain(double value, bool bUpdateConfig) = 0;
 	virtual double getGain() const = 0;
 
-    virtual void getCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float &outFocalLengthX, float &outFocalLengthY,
-        float &outPrincipalX, float &outPrincipalY,
-        float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
-        float &outDistortionP1, float &outDistortionP2) const = 0;
-    virtual void setCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float focalLengthX, float focalLengthY,
-        float principalX, float principalY,
-        float distortionK1, float distortionK2, float distortionK3,
-        float distortionP1, float distortionP2) = 0;
+    virtual void getCameraIntrinsics(CommonTrackerIntrinsics &out_tracker_intrinsics) const = 0;
+    virtual void setCameraIntrinsics(const CommonTrackerIntrinsics &tracker_intrinsics) = 0;
 
     virtual CommonDevicePose getTrackerPose() const = 0;
     virtual void setTrackerPose(const struct CommonDevicePose *pose) = 0;

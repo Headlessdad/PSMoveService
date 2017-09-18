@@ -411,6 +411,73 @@ typedef struct
 // Tracker State
 //--------------
 
+/// Radial and tangential lens distortion coefficients computed during lens lens calibration
+/// See the [OpenCV Docs](http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html) for details
+typedef struct 
+{
+    double k1; ///< Radial Distortion Parameter 1
+    double k2; ///< Radial Distortion Parameter 2
+    double k3; ///< Radial Distortion Parameter 3
+    double p1; ///< Tangential Distortion Parameter 1
+    double p2; ///< Tangential Distortion Parameter 2
+} PSMDistortionCoefficients;
+
+/// Camera intrinsic properties for a monoscopic camera
+/// See the [OpenCV Docs](http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html) for details
+typedef struct  
+{
+    float pixel_width;  ///< Width of the camera buffer in pixels
+    float pixel_height; ///< Height of the camera buffer in pixels
+    float hfov;         ///< The horizontal field of view camera in degrees
+    float vfov;         ///< The vertical field of view camera in degrees
+    float znear;        ///< The distance of the near clipping plane in cm
+    float zfar;         ///< The distance of the far clipping plane in cm
+    PSMDistortionCoefficients distortion_coefficients;   ///< Lens distortion coefficients
+    PSMMatrix3d camera_matrix;   ///< Intrinsic camera matrix containing focal lengths and principal point
+} PSMMonoTrackerIntrinsics;
+
+/// Camera intrinsic properties for a stereoscopic camera
+/// See the [OpenCV Docs](http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html) for details
+typedef struct 
+{
+    // Keep these in sync with PSMMonoTrackerIntrinsics
+    float pixel_width;  ///< Width of the camera buffer in pixels
+    float pixel_height; ///< Height of the camera buffer in pixels
+    float hfov;         ///< The horizontal field of view camera in degrees
+    float vfov;         ///< The vertical field of view camera in degrees
+    float znear;        ///< The distance of the near clipping plane in cm
+    float zfar;         ///< The distance of the far clipping plane in cm
+    PSMDistortionCoefficients left_distortion_coefficients; ///< Left lens distortion coefficients
+    PSMMatrix3d left_camera_matrix; ///< Intrinsic matrix for left camera containing focal lengths and principal point
+    // Keep these in sync with PSMMonoTrackerIntrinsics
+
+    PSMDistortionCoefficients right_distortion_coefficients; ///< Right lens distortion coefficients
+    PSMMatrix3d right_camera_matrix; ///< Intrinsic matrix for rotation camera containing focal lengths and principal point
+    PSMMatrix3d left_rectification_rotation; ///< Rotation applied to left camera to rectify the image
+    PSMMatrix3d right_rectification_rotation; ///< Rotation applied to right camera to rectify the image
+    PSMMatrix34d left_rectification_projection; ///< Projection applied to left camera to rectify the image
+    PSMMatrix34d right_rectification_projection; ///< Projection applied to right camera to rectify the image
+    PSMMatrix3d rotation_between_cameras; ///< Rotation between the left and right cameras
+    PSMVector3d translation_between_cameras; ///< Translation between the left and right camera
+    PSMMatrix3d essential_matrix; ///< Transform relating points in unit coordinate space between cameras
+    PSMMatrix3d fundamental_matrix; ///< Transform relating points in pixel coordinates between cameras
+} PSMStereoTrackerIntrinsics;
+
+/// Bundle containing all intrinsic camera properties
+typedef struct 
+{
+    union {
+        PSMMonoTrackerIntrinsics mono;
+        PSMStereoTrackerIntrinsics stereo;
+    } intrinsics;
+
+    enum eTrackerIntrinsicsType
+    {
+        PSM_MONO_TRACKER_INTRINSICS,
+        PSM_STEREO_TRACKER_INTRINSICS,
+    } intrinsics_type;
+} PSMTrackerIntrinsics;
+
 /// Static properties about a tracker
 typedef struct
 {
@@ -426,19 +493,7 @@ typedef struct
     char shared_memory_name[64];
 
     // Camera Intrinsic properties
-    PSMVector2f tracker_focal_lengths; ///< lens focal length in pixels
-    PSMVector2f tracker_principal_point; ///< lens center point in pixels
-    PSMVector2f tracker_screen_dimensions; ///< tracker image size in pixels
-    int tracker_section_count; ///< 2 for a stereo camera, 1 for a mono camera
-    float tracker_hfov; ///< tracker horizontal FOV in degrees
-    float tracker_vfov; ///< tracker vertical FOV in degrees
-    float tracker_znear; ///< tracker z-near plane distance in cm
-    float tracker_zfar; ///< tracker z-far plane distance in cm
-    float tracker_k1; ///< lens distortion coefficient k1
-    float tracker_k2; ///< lens distortion coefficient k2
-    float tracker_k3; ///< lens distortion coefficient k3
-    float tracker_p1; ///< lens distortion coefficient p1
-    float tracker_p2; ///< lens distortion coefficient p2
+    PSMTrackerIntrinsics tracker_intrinsics;
 
     // Camera Extrinsic properties
     PSMPosef tracker_pose; ///< World space location of tracker (relative to calibration mat)
@@ -1203,13 +1258,17 @@ PSM_PUBLIC_FUNCTION(PSMResult) PSM_AllocateTrackerListener(PSMTrackerID tracker_
 PSM_PUBLIC_FUNCTION(PSMResult) PSM_FreeTrackerListener(PSMTrackerID controller_id);
 
 // Tracker State Methods
-/** \brief Extract the intrinsic matrix
-	The intrinsic matrix is used to convert a camera relative 3d position to a pixel projection.
-	It encodes the focal length and the center offset of the cameras lens.
+/** \brief Get the dimensions of the camera frame for a tracker in pixels
 	\param tracker_id The id of the tracker
-	\param[out] out_matrix the 3x3 colomn major camera intrinsic matrix
+	\param[out] out_screen_size The width and height of one tracker frame
  */
-PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetTrackerIntrinsicMatrix(PSMTrackerID tracker_id, PSMMatrix3f *out_matrix);
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetTrackerScreenSize(PSMTrackerID tracker_id, PSMVector2f *out_screen_size);
+
+/** \brief Extract the camera intrinsics for the given tracker
+	\param tracker_id The id of the tracker
+	\param[out] out_intrinsics The full set of camera intrinsics for the tracker
+ */
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetTrackerIntrinsics(PSMTrackerID tracker_id, PSMTrackerIntrinsics *out_intrinsics);
 
 // Blocking Tracker Methods
 /** \brief Requests a list of the trackers currently connected to PSMoveService.

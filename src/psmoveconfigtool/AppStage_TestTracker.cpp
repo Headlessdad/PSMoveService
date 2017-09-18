@@ -258,11 +258,16 @@ void AppStage_TestTracker::handle_tracker_start_stream_response(
             if (PSM_OpenTrackerVideoStream(trackerView->tracker_info.tracker_id) == PSMResult_Success &&
                 PSM_GetTrackerVideoFrameSectionCount(trackerView->tracker_info.tracker_id, &thisPtr->m_section_count) == PSMResult_Success)
             {
+                PSMVector2f screenSize;
+                PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &screenSize);
+                const unsigned int frameWidth = static_cast<unsigned int>(screenSize.x);
+                const unsigned int frameHeight = static_cast<unsigned int>(screenSize.y);
+
                 // Create a texture to render the video frame to
                 thisPtr->m_video_texture = new TextureAsset();
                 thisPtr->m_video_texture->init(
-                    static_cast<unsigned int>(trackerView->tracker_info.tracker_screen_dimensions.x),
-                    static_cast<unsigned int>(trackerView->tracker_info.tracker_screen_dimensions.y),
+                    frameWidth,
+                    frameHeight,
                     GL_RGB, // texture format
                     GL_BGR, // buffer format
                     nullptr);

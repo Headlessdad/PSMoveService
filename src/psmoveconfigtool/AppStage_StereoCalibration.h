@@ -1,5 +1,5 @@
-#ifndef APP_STAGE_DISTORTION_CALIBRATION_H
-#define APP_STAGE_DISTORTION_CALIBRATION_H
+#ifndef APP_STAGE_STEREO_CALIBRATION_H
+#define APP_STAGE_STEREO_CALIBRATION_H
 
 //-- includes -----
 #include "AppStage.h"
@@ -8,10 +8,10 @@
 #include <vector>
 
 //-- definitions -----
-class AppStage_DistortionCalibration : public AppStage
+class AppStage_StereoCalibration : public AppStage
 {
 public:
-    AppStage_DistortionCalibration(class App *app);
+    AppStage_StereoCalibration(class App *app);
 
     virtual void enter() override;
     virtual void exit() override;
@@ -27,8 +27,10 @@ public:
     void request_tracker_set_temp_gain(float gain);
     void request_tracker_set_temp_exposure(float exposure);
     void request_tracker_set_intrinsic(
-        const PSMMatrix3d &camera_matrix,
-        const PSMDistortionCoefficients &distortion_coefficients);
+        const PSMMatrix3d &left_camera_matrix, 
+        const PSMMatrix3d &right_camera_matrix,
+        const PSMDistortionCoefficients &left_distortion_coefficients,
+        const PSMDistortionCoefficients &right_distortion_coefficients);
     void request_tracker_reload_settings();
     void request_exit();
 
@@ -82,8 +84,8 @@ private:
 
     bool m_bStreamIsActive;
     PSMTracker *m_tracker_view;
-    class TextureAsset *m_video_texture;
-    class OpenCVBufferState *m_opencv_state;
+    class TextureAsset *m_video_texture[2];
+    class OpenCVBufferState *m_opencv_state[2];
 };
 
 #endif // APP_STAGE_DISTORTION_CALIBRATION_H

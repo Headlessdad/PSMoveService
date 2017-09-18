@@ -107,6 +107,70 @@ psmove_matrix3x3_to_cv_mat33f(const PSMMatrix3f &in)
     return out;
 }
 
+cv::Matx33f
+psmove_matrix3x3_to_cv_mat33f(const PSMMatrix3d &in)
+{
+    // Both OpenCV and PSMMatrix3f matrices are stored row-major
+    cv::Matx33f out;
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            out(i, j) = static_cast<float>(in.m[i][j]);
+        }
+    }
+
+    return out;
+}
+
+cv::Matx33d psmove_matrix3x3_to_cv_mat33d(const PSMMatrix3d &in)
+{
+    // Both OpenCV and PSMMatrix3f matrices are stored row-major
+    cv::Matx33d out;
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            out(i, j) = in.m[i][j];
+        }
+    }
+
+    return out;
+}
+
+// OpenCV types to PSMove types
+PSMMatrix3f 
+cv_mat33f_to_psmove_matrix3x3(const cv::Matx33f &in)
+{
+    // Both OpenCV and PSMMatrix3f matrices are stored row-major
+    PSMMatrix3f out;
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            out.m[i][j]= in(i, j);
+        }
+    }
+
+    return out;
+}
+
+PSMMatrix3d
+cv_mat33d_to_psmove_matrix3x3(const cv::Matx33d &in)
+{
+    // Both OpenCV and PSMMatrix3f matrices are stored row-major
+    PSMMatrix3d out;
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            out.m[i][j]= in(i, j);
+        }
+    }
+
+    return out;
+}
+
 // GLM Types to Eigen types
 Eigen::Matrix3f glm_mat3_to_eigen_matrix3f(const glm::mat3 &m)
 {
@@ -155,6 +219,21 @@ Eigen::Matrix3f psm_matrix3f_to_eigen_matrix3(const PSMMatrix3f &m)
 	result << basis_x.x, basis_x.y, basis_x.z,
 		basis_y.x, basis_y.y, basis_y.z,
 		basis_z.x, basis_z.y, basis_z.z;
+
+	return result;
+}
+
+Eigen::Matrix3f psm_matrix3d_to_eigen_matrix3f(const PSMMatrix3d &m)
+{
+	Eigen::Matrix3f result;
+
+    PSMVector3d basis_x= PSM_Matrix3dBasisX(&m);
+    PSMVector3d basis_y= PSM_Matrix3dBasisY(&m);
+    PSMVector3d basis_z= PSM_Matrix3dBasisZ(&m);
+
+	result << (float)basis_x.x, (float)basis_x.y, (float)basis_x.z,
+		(float)basis_y.x, (float)basis_y.y, (float)basis_y.z,
+		(float)basis_z.x, (float)basis_z.y, (float)basis_z.z;
 
 	return result;
 }

@@ -60,8 +60,10 @@ public:
         , gsUpperBuffer(nullptr)
         , maskedBuffer(nullptr)
     {
-        const int frameWidth = static_cast<int>(trackerView->tracker_info.tracker_screen_dimensions.x);
-        const int frameHeight = static_cast<int>(trackerView->tracker_info.tracker_screen_dimensions.y);
+        PSMVector2f screenSize;
+        PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &screenSize);
+        const int frameWidth = static_cast<int>(screenSize.x);
+        const int frameHeight = static_cast<int>(screenSize.y);
 
         // Create a texture to render the video frame to
         videoTexture = new TextureAsset();
@@ -262,8 +264,10 @@ void AppStage_ColorCalibration::update()
         if (PSM_PollTrackerVideoStream(m_trackerView->tracker_info.tracker_id) == PSMResult_Success &&
             PSM_GetTrackerVideoFrameBuffer(m_trackerView->tracker_info.tracker_id, PSMVideoFrameSection_Primary, &video_buffer) == PSMResult_Success)
         {
-            const int frameWidth = static_cast<int>(m_trackerView->tracker_info.tracker_screen_dimensions.x);
-            const int frameHeight = static_cast<int>(m_trackerView->tracker_info.tracker_screen_dimensions.y);
+            PSMVector2f screenSize;
+            PSM_GetTrackerScreenSize(m_trackerView->tracker_info.tracker_id, &screenSize);
+            const unsigned int frameWidth = static_cast<unsigned int>(screenSize.x);
+            const unsigned int frameHeight = static_cast<unsigned int>(screenSize.y);
             const unsigned char *display_buffer = video_buffer;
             const TrackerColorPreset &preset = getColorPreset();
 

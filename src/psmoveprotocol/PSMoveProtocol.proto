@@ -18,6 +18,12 @@ message Pixel {
     float y = 2;
 }
 
+message DoubleVector {
+    double i = 1;
+    double j = 2;
+    double k = 3;
+}
+
 message FloatVector {
     float i = 1;
     float j = 2;
@@ -41,6 +47,33 @@ message Orientation{
     float y = 2;
     float z = 3;
     float w = 4;
+}
+
+message DoubleMatrix33 {
+    double m00 = 1;
+    double m01 = 2;
+    double m02 = 3;
+    double m10 = 4;
+    double m11 = 5;
+    double m12 = 6;
+	double m20 = 7;
+    double m21 = 8;
+    double m22 = 9;
+}
+
+message DoubleMatrix34 {
+    double m00 = 1;
+    double m01 = 2;
+    double m02 = 3;
+	double m03 = 4;
+    double m10 = 5;
+    double m11 = 6;
+    double m12 = 7;
+	double m13 = 8;
+	double m20 = 9;
+    double m21 = 10;
+    double m22 = 11;
+	double m23 = 12;
 }
 
 message Ellipse
@@ -97,6 +130,49 @@ message TrackingColorPreset {
     float saturation_range = 5;
     float value_center = 6;
     float value_range = 7;
+}
+
+// Camera Intrinsic Properties
+message TrackerIntrinsics{
+	message DistortionCoefficients {
+		double k1= 1;
+		double k2= 2;
+		double k3= 3;
+		double p1= 4;
+		double p2= 5;
+	}
+	
+	message MonoIntrinics {
+		Pixel tracker_screen_dimensions = 1;	
+		float hfov = 2;
+		float vfov = 3;
+		float znear = 4;
+		float zfar = 5;	
+		DoubleMatrix33 camera_matrix = 6;
+		DistortionCoefficients distortion_coefficients= 7;
+	}
+	MonoIntrinics mono_intrinsics= 1;
+	
+	message StereoIntrinsics {
+		Pixel tracker_screen_dimensions = 1;	
+		float hfov = 2;
+		float vfov = 3;
+		float znear = 4;
+		float zfar = 5;	
+		DoubleMatrix33 left_camera_matrix = 6;
+		DoubleMatrix33 right_camera_matrix = 7;
+		DistortionCoefficients left_distortion_coefficients = 8;
+		DistortionCoefficients right_distortion_coefficients = 9;
+		DoubleMatrix33 left_rectification_rotation = 10;
+		DoubleMatrix33 right_rectification_rotation = 11;
+		DoubleMatrix34 left_rectification_projection = 12;
+		DoubleMatrix34 right_rectification_projection = 13;		
+		DoubleMatrix33 rotation_between_cameras = 14;
+		DoubleVector translation_between_cameras = 15;
+		DoubleMatrix33 essential_matrix = 16;
+		DoubleMatrix33 fundamental_matrix = 17;
+	}
+	StereoIntrinsics stereo_intrinsics= 2;
 }
 
 enum HMDType {
@@ -377,13 +453,7 @@ message Request {
     // Parameters for SET_TRACKER_INTRINSICS
     message RequestSetTrackerIntrinsics {
         int32 tracker_id = 1;
-        Pixel tracker_focal_lengths = 2;
-        Pixel tracker_principal_point = 3;
-        float tracker_k1= 4;
-        float tracker_k2= 5;
-        float tracker_k3= 6;
-        float tracker_p1= 7;
-        float tracker_p2= 8;
+		TrackerIntrinsics tracker_intrinsics = 2;
     }
     RequestSetTrackerIntrinsics request_set_tracker_intrinsics = 30;
 
@@ -628,22 +698,10 @@ message Response {
             string shared_memory_name = 5;
 
             // Camera Intrinsic Properties
-            Pixel tracker_focal_lengths = 6;
-            Pixel tracker_principal_point = 7;
-            Pixel tracker_screen_dimensions = 8;
-			int32 tracker_section_count = 9;
-            float tracker_hfov = 10;
-            float tracker_vfov = 11;
-            float tracker_znear = 12;
-            float tracker_zfar = 13;
-            float tracker_k1= 14;
-            float tracker_k2= 15;
-            float tracker_k3= 16;
-            float tracker_p1= 17;
-            float tracker_p2= 18;
+			TrackerIntrinsics tracker_intrinsics = 6;
 
             // Camera Extrinsic Properties
-            Pose tracker_pose = 19;
+            Pose tracker_pose = 7;
         }
         repeated TrackerInfo trackers = 1;
         float global_forward_degrees = 2;

@@ -564,6 +564,61 @@ void drawFullscreenTexture(const unsigned int texture_id)
     glPopMatrix();
 }
 
+void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsigned int right_texture_id)
+{
+    // Save a backup of the projection matrix and replace with the identity matrix
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Save a backup of the modelview matrix and replace with the identity matrix
+    glMatrixMode(GL_MODELVIEW); 
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Clear the screen and depth buffer
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Bind the left texture to draw
+    glBindTexture(GL_TEXTURE_2D, left_texture_id);
+
+    // Fill the left half of the screen with the left texture
+    glColor3f(1.f, 1.f, 1.f);
+    glBegin(GL_QUADS);
+        glTexCoord2f(0.f, 1.f); glVertex2f(-1.f, -0.5f);
+        glTexCoord2f(1.f, 1.f); glVertex2f(0.f, -0.5f);
+        glTexCoord2f(1.f, 0.f); glVertex2f(0.f, 0.5f);
+        glTexCoord2f(0.f, 0.f); glVertex2f(-1.f, 0.5f);
+    glEnd();
+
+    // Bind the right texture to draw
+    glBindTexture(GL_TEXTURE_2D, right_texture_id);
+
+    // Fill the right half of the screen with the right texture
+    glColor3f(1.f, 1.f, 1.f);
+    glBegin(GL_QUADS);
+        glTexCoord2f(0.f, 1.f); glVertex2f(0.f, -0.5f);
+        glTexCoord2f(1.f, 1.f); glVertex2f(1.f, -0.5f);
+        glTexCoord2f(1.f, 0.f); glVertex2f(1.f, 0.5f);
+        glTexCoord2f(0.f, 0.f); glVertex2f(0.f, 0.5f);
+    glEnd();
+
+    // rebind the default texture
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    // Clear the depth buffer to allow overdraw 
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Restore the projection matrix
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+
+    // Restore the modelview matrix
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+}
+
+
 void drawPointCloudProjection(
 	const PSMVector2f *points,
 	const int point_count, 
@@ -1205,10 +1260,11 @@ void drawTrackerList(const PSMClientTrackerInfo *trackerList, const int trackerC
 		PSM_FrustumSetPose(&frustum, &tracker_pose);
 
 		// Convert the FOV angles to radians for rendering purposes
-		frustum.HFOV = trackerInfo->tracker_hfov * k_degrees_to_radians;
-		frustum.VFOV = trackerInfo->tracker_vfov * k_degrees_to_radians;
-		frustum.zNear = trackerInfo->tracker_znear;
-		frustum.zFar = trackerInfo->tracker_zfar;
+        const PSMMonoTrackerIntrinsics &mono_intrinsics= trackerInfo->tracker_intrinsics.intrinsics.mono;
+		frustum.HFOV = mono_intrinsics.hfov * k_degrees_to_radians;
+		frustum.VFOV = mono_intrinsics.vfov * k_degrees_to_radians;
+		frustum.zNear = mono_intrinsics.znear;
+		frustum.zFar = mono_intrinsics.zfar;
 
 		drawTransformedFrustum(psmove_tracking_space_to_chaperone_space, &frustum, k_psmove_frustum_color);
 		drawTransformedAxes(chaperoneSpaceTransform, 20.f);

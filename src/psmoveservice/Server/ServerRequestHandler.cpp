@@ -1698,6 +1698,44 @@ protected:
         position->set_z(pose.PositionCm.z);
     }
 
+    inline void common_distortion_to_protocol_distortion(
+        const CommonDistortionCoefficients &d,
+        PSMoveProtocol::TrackerIntrinsics_DistortionCoefficients *result)
+    {
+        result->set_k1(d.k1);
+        result->set_k3(d.k2);
+        result->set_k3(d.k3);
+        result->set_p1(d.p1);
+        result->set_p2(d.p2);
+    }
+
+    inline void common_vec3_to_protocol_vec3(
+        const std::array<double, 3> &v,
+        PSMoveProtocol::DoubleVector *result)
+    {
+        result->set_i(v[0]);
+        result->set_j(v[1]);
+        result->set_k(v[2]);
+    }
+
+    inline void common_mat33_to_protocol_mat33(
+        const std::array<double, 9> &m,
+        PSMoveProtocol::DoubleMatrix33 *result)
+    {
+        result->set_m00(m[0]); result->set_m01(m[1]); result->set_m02(m[2]);
+        result->set_m10(m[3]); result->set_m11(m[4]); result->set_m12(m[5]);
+        result->set_m20(m[6]); result->set_m21(m[7]); result->set_m22(m[8]);
+    }
+
+    inline void common_mat34_to_protocol_mat34(
+        const std::array<double, 12> &m,
+        PSMoveProtocol::DoubleMatrix34 *result)
+    {
+        result->set_m00(m[0]); result->set_m01(m[1]); result->set_m02(m[2]); result->set_m03(m[3]);
+        result->set_m10(m[4]); result->set_m11(m[5]); result->set_m12(m[6]); result->set_m13(m[7]);
+        result->set_m20(m[8]); result->set_m21(m[9]); result->set_m22(m[10]); result->set_m23(m[11]);
+    }
+
     void handle_request__get_tracker_list(
         const RequestContext &context,
         PSMoveProtocol::Response *response)
@@ -1751,49 +1789,82 @@ protected:
 
                 // Get the intrinsic camera lens properties
                 {
-                    float pixelWidth, pixelHeight;
-                    float focalLengthX, focalLengthY, principalX, principalY;
-                    float distortionK1, distortionK2, distortionK3;
-                    float distortionP1, distortionP2;
+                    CommonTrackerIntrinsics tracker_intrinsics;
 
-                    tracker_view->getCameraIntrinsics(
-                        ITrackerInterface::PrimarySection, //###HipsterSloth TODO: Get both sections
-                        focalLengthX, focalLengthY, 
-                        principalX, principalY,
-                        distortionK1, distortionK2, distortionK3,
-                        distortionP1, distortionP2);
-                    tracker_view->getPixelDimensions(pixelWidth, pixelHeight);
+                    tracker_view->getCameraIntrinsics(tracker_intrinsics);
 
-                    tracker_info->mutable_tracker_focal_lengths()->set_x(focalLengthX);
-                    tracker_info->mutable_tracker_focal_lengths()->set_y(focalLengthY);
+                    switch (tracker_intrinsics.intrinsics_type)
+                    {
+                    case CommonTrackerIntrinsics::MONO_TRACKER_INTRINSICS:
+                        {                            
+                            const CommonMonoTrackerIntrinsics &src_intrinsics= tracker_intrinsics.mono_intrinsics;
+                            auto* dest_intrinsics= tracker_info->mutable_tracker_intrinsics()->mutable_mono_intrinsics();
 
-                    tracker_info->mutable_tracker_principal_point()->set_x(principalX);
-                    tracker_info->mutable_tracker_principal_point()->set_y(principalY);
+                            dest_intrinsics->mutable_tracker_screen_dimensions()->set_x(src_intrinsics.pixel_width);
+                            dest_intrinsics->mutable_tracker_screen_dimensions()->set_y(src_intrinsics.pixel_height);
+                            dest_intrinsics->set_hfov(src_intrinsics.hfov);
+                            dest_intrinsics->set_vfov(src_intrinsics.vfov);
+                            dest_intrinsics->set_znear(src_intrinsics.znear);
+                            dest_intrinsics->set_zfar(src_intrinsics.zfar);
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.camera_matrix, 
+                                dest_intrinsics->mutable_camera_matrix());
+                            common_distortion_to_protocol_distortion(
+                                src_intrinsics.distortion_coefficients,
+                                dest_intrinsics->mutable_distortion_coefficients());
+                        } break;
+                    case CommonTrackerIntrinsics::STEREO_TRACKER_INTRINSICS:
+                        {
+                            const CommonStereoTrackerIntrinsics &src_intrinsics= tracker_intrinsics.stereo_intrinsics;
+                            auto* dest_intrinsics= tracker_info->mutable_tracker_intrinsics()->mutable_stereo_intrinsics();
 
-                    tracker_info->mutable_tracker_screen_dimensions()->set_x(pixelWidth);
-                    tracker_info->mutable_tracker_screen_dimensions()->set_y(pixelHeight);
-
-                    tracker_info->set_tracker_section_count(tracker_view->getIsStereoCamera() ? 2 : 1);
-                    
-                    tracker_info->set_tracker_k1(distortionK1);
-                    tracker_info->set_tracker_k2(distortionK2);
-                    tracker_info->set_tracker_k3(distortionK3);
-                    tracker_info->set_tracker_p1(distortionP1);
-                    tracker_info->set_tracker_p2(distortionP2);
-                }
-
-                // Get the tracker field of view properties
-                {
-                    float hfov, vfov;
-                    float zNear, zFar;
-                    
-                    tracker_view->getFOV(hfov, vfov);
-                    tracker_view->getZRange(zNear, zFar);
-
-                    tracker_info->set_tracker_hfov(hfov);
-                    tracker_info->set_tracker_vfov(vfov);
-                    tracker_info->set_tracker_znear(zNear);
-                    tracker_info->set_tracker_zfar(zFar);
+                            dest_intrinsics->mutable_tracker_screen_dimensions()->set_x(src_intrinsics.pixel_width);
+                            dest_intrinsics->mutable_tracker_screen_dimensions()->set_y(src_intrinsics.pixel_height);
+                            dest_intrinsics->set_hfov(src_intrinsics.hfov);
+                            dest_intrinsics->set_vfov(src_intrinsics.vfov);
+                            dest_intrinsics->set_znear(src_intrinsics.znear);
+                            dest_intrinsics->set_zfar(src_intrinsics.zfar);
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.left_camera_matrix, 
+                                dest_intrinsics->mutable_left_camera_matrix());
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.right_camera_matrix, 
+                                dest_intrinsics->mutable_right_camera_matrix());
+                            common_distortion_to_protocol_distortion(
+                                src_intrinsics.left_distortion_coefficients,
+                                dest_intrinsics->mutable_left_distortion_coefficients());
+                            common_distortion_to_protocol_distortion(
+                                src_intrinsics.right_distortion_coefficients,
+                                dest_intrinsics->mutable_right_distortion_coefficients());
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.left_rectification_rotation, 
+                                dest_intrinsics->mutable_left_rectification_rotation());
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.right_rectification_rotation, 
+                                dest_intrinsics->mutable_right_rectification_rotation());
+                            common_mat34_to_protocol_mat34(
+                                src_intrinsics.left_rectification_projection, 
+                                dest_intrinsics->mutable_left_rectification_projection());
+                            common_mat34_to_protocol_mat34(
+                                src_intrinsics.right_rectification_projection, 
+                                dest_intrinsics->mutable_right_rectification_projection());
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.rotation_between_cameras, 
+                                dest_intrinsics->mutable_rotation_between_cameras());
+                            common_vec3_to_protocol_vec3(
+                                src_intrinsics.translation_between_cameras, 
+                                dest_intrinsics->mutable_translation_between_cameras());
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.essential_matrix, 
+                                dest_intrinsics->mutable_essential_matrix());
+                            common_mat33_to_protocol_mat33(
+                                src_intrinsics.fundamental_matrix, 
+                                dest_intrinsics->mutable_fundamental_matrix());
+                        } break;
+                    default:
+                        assert(0 && "Unhandled intrinsics type");
+                        break;
+                    }
                 }
 
                 // Get the tracker pose
@@ -2349,6 +2420,44 @@ protected:
         }
     }
 
+    inline void protocol_distortion_to_common_distortion(
+        const PSMoveProtocol::TrackerIntrinsics_DistortionCoefficients &d,
+        CommonDistortionCoefficients &result)
+    {
+        result.k1= d.k1();
+        result.k3= d.k2();
+        result.k3= d.k3();
+        result.p1= d.p1();
+        result.p2= d.p2();
+    }
+
+    inline void protocol_vec3_to_common_vec3(
+        const PSMoveProtocol::DoubleVector &v,
+        std::array<double, 3> &result)
+    {
+        result[0]= v.i();
+        result[1]= v.j();
+        result[2]= v.k();
+    }
+
+    inline void protocol_mat33_to_common_mat33(
+        const PSMoveProtocol::DoubleMatrix33 &m,
+        std::array<double, 9> &result)
+    {
+        result[0]= m.m00(); result[1]= m.m01(); result[2]= m.m02();
+        result[3]= m.m10(); result[4]= m.m11(); result[5]= m.m12();
+        result[6]= m.m20(); result[7]= m.m21(); result[8]= m.m22();
+    }
+
+    inline void protocol_mat34_to_common_mat34(
+        const PSMoveProtocol::DoubleMatrix34 &m,
+        std::array<double, 12> &result)
+    {
+        result[0]= m.m00(); result[1]= m.m01(); result[2]= m.m02(); result[4]= m.m03();
+        result[5]= m.m10(); result[6]= m.m11(); result[7]= m.m12(); result[8]= m.m13();
+        result[9]= m.m20(); result[10]= m.m21(); result[11]= m.m22(); result[12]= m.m23();
+    }
+
     void handle_request__set_tracker_intrinsics(
         const RequestContext &context,
         PSMoveProtocol::Response *response)
@@ -2359,17 +2468,83 @@ protected:
             ServerTrackerViewPtr tracker_view = m_device_manager.getTrackerViewPtr(tracker_id);
             if (tracker_view->getIsOpen())
             {
-                const auto &intrinsics= context.request->request_set_tracker_intrinsics();
+                const PSMoveProtocol::TrackerIntrinsics &src_intrinsics= 
+                    context.request->request_set_tracker_intrinsics().tracker_intrinsics();
+                CommonTrackerIntrinsics dest_intrinsics;
+                bool bValidIntrinsics= false;
 
-                tracker_view->setCameraIntrinsics(
-                    ITrackerInterface::PrimarySection, //###HipsterSloth $TODO
-                    intrinsics.tracker_focal_lengths().x(), intrinsics.tracker_focal_lengths().y(),
-                    intrinsics.tracker_principal_point().x(), intrinsics.tracker_principal_point().y(),
-                    intrinsics.tracker_k1(), intrinsics.tracker_k2(), intrinsics.tracker_k3(),
-                    intrinsics.tracker_p1(), intrinsics.tracker_p2());
-                tracker_view->saveSettings();
+                if (tracker_view->getIsStereoCamera() && src_intrinsics.has_stereo_intrinsics())
+                {
+                    const PSMoveProtocol::TrackerIntrinsics_StereoIntrinsics &src_stereo= 
+                        src_intrinsics.stereo_intrinsics(); 
+                    CommonStereoTrackerIntrinsics &dest_stereo= dest_intrinsics.stereo_intrinsics;
 
-                response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_OK);
+                    dest_intrinsics.intrinsics_type= CommonTrackerIntrinsics::STEREO_TRACKER_INTRINSICS;
+                    dest_stereo.pixel_width= src_stereo.tracker_screen_dimensions().x();
+                    dest_stereo.pixel_height= src_stereo.tracker_screen_dimensions().y();
+                    dest_stereo.hfov= src_stereo.hfov();
+                    dest_stereo.vfov= src_stereo.vfov();
+                    dest_stereo.znear= src_stereo.znear();
+                    dest_stereo.zfar= src_stereo.zfar();
+                    protocol_distortion_to_common_distortion(
+                        src_stereo.left_distortion_coefficients(), dest_stereo.left_distortion_coefficients);
+                    protocol_distortion_to_common_distortion(
+                        src_stereo.right_distortion_coefficients(), dest_stereo.right_distortion_coefficients);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.left_camera_matrix(), dest_stereo.left_camera_matrix);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.right_camera_matrix(), dest_stereo.right_camera_matrix);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.left_rectification_rotation(), dest_stereo.left_rectification_rotation);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.right_rectification_rotation(), dest_stereo.right_rectification_rotation);
+                    protocol_mat34_to_common_mat34(
+                        src_stereo.left_rectification_projection(), dest_stereo.left_rectification_projection);
+                    protocol_mat34_to_common_mat34(
+                        src_stereo.right_rectification_projection(), dest_stereo.right_rectification_projection);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.rotation_between_cameras(), dest_stereo.rotation_between_cameras);
+                    protocol_vec3_to_common_vec3(
+                        src_stereo.translation_between_cameras(), dest_stereo.translation_between_cameras);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.essential_matrix(), dest_stereo.essential_matrix);
+                    protocol_mat33_to_common_mat33(
+                        src_stereo.fundamental_matrix(), dest_stereo.fundamental_matrix);
+
+                    bValidIntrinsics= true;
+                }
+                else if (!tracker_view->getIsStereoCamera() && src_intrinsics.has_mono_intrinsics())
+                {
+                    const PSMoveProtocol::TrackerIntrinsics_MonoIntrinics &src_mono= 
+                        src_intrinsics.mono_intrinsics(); 
+                    CommonMonoTrackerIntrinsics &dest_mono= dest_intrinsics.mono_intrinsics;
+
+                    dest_intrinsics.intrinsics_type= CommonTrackerIntrinsics::MONO_TRACKER_INTRINSICS;
+                    dest_mono.pixel_width= src_mono.tracker_screen_dimensions().x();
+                    dest_mono.pixel_height= src_mono.tracker_screen_dimensions().y();
+                    dest_mono.hfov= src_mono.hfov();
+                    dest_mono.vfov= src_mono.vfov();
+                    dest_mono.znear= src_mono.znear();
+                    dest_mono.zfar= src_mono.zfar();
+                    protocol_distortion_to_common_distortion(
+                        src_mono.distortion_coefficients(), dest_mono.distortion_coefficients);
+                    protocol_mat33_to_common_mat33(
+                        src_mono.camera_matrix(), dest_mono.camera_matrix);
+
+                    bValidIntrinsics= true;
+                }
+
+                if (bValidIntrinsics)
+                {
+                    tracker_view->setCameraIntrinsics(dest_intrinsics);
+                    tracker_view->saveSettings();
+
+                    response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_OK);
+                }
+                else
+                {
+                    response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_ERROR);
+                }
             }
             else
             {

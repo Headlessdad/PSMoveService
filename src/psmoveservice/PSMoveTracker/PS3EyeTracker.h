@@ -37,26 +37,12 @@ public:
     
     bool is_valid;
     long max_poll_failure_count;
-	double frame_width;
-	double frame_height;
 	double frame_rate;
     double exposure;
 	double gain;
-    double focalLengthX;
-    double focalLengthY;
-    double principalX;
-    double principalY;
-    double hfov;
-    double vfov;
-    double zNear;
-    double zFar;
-    double distortionK1;
-    double distortionK2;
-    double distortionK3;
-    double distortionP1;
-    double distortionP2;
 
     eFOVSetting fovSetting;
+    CommonMonoTrackerIntrinsics trackerIntrinsics;
     CommonDevicePose pose;
 	CommonHSVColorRangeTable SharedColorPresets;
 	std::vector<CommonHSVColorRangeTable> DeviceColorPresets;
@@ -118,18 +104,8 @@ public:
     double getExposure() const override;
 	void setGain(double value, bool bUpdateConfig) override;
 	double getGain() const override;
-    void getCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float &outFocalLengthX, float &outFocalLengthY,
-        float &outPrincipalX, float &outPrincipalY,
-        float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
-        float &outDistortionP1, float &outDistortionP2) const override;
-    void setCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float focalLengthX, float focalLengthY,
-        float principalX, float principalY,
-        float distortionK1, float distortionK2, float distortionK3,
-        float distortionP1, float distortionP2) override;
+    void getCameraIntrinsics(CommonTrackerIntrinsics &out_tracker_intrinsics) const override;
+    void setCameraIntrinsics(const CommonTrackerIntrinsics &tracker_intrinsics) override;
     CommonDevicePose getTrackerPose() const override;
     void setTrackerPose(const struct CommonDevicePose *pose) override;
     void getFOV(float &outHFOV, float &outVFOV) const override;

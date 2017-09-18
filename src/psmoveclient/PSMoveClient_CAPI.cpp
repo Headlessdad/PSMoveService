@@ -1049,20 +1049,41 @@ PSMResult PSM_FreeTrackerListener(PSMTrackerID tracker_id)
 }
 
 /// Tracker State Methods
-PSMResult PSM_GetTrackerIntrinsicMatrix(PSMTrackerID tracker_id, PSMMatrix3f *out_matrix)
+PSMResult PSM_GetTrackerScreenSize(PSMTrackerID tracker_id, PSMVector2f *out_screen_size)
+{
+    PSMResult result= PSMResult_Error;
+
+    if (g_psm_client != nullptr && IS_VALID_TRACKER_INDEX(tracker_id))
+    {
+        PSMTracker *tracker= g_psm_client->get_tracker_view(tracker_id);
+
+        switch (tracker->tracker_info.tracker_intrinsics.intrinsics_type)
+        {
+        case PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS:
+            out_screen_size->x= tracker->tracker_info.tracker_intrinsics.intrinsics.stereo.pixel_width;
+            out_screen_size->y= tracker->tracker_info.tracker_intrinsics.intrinsics.stereo.pixel_height;
+            break;
+        case PSMTrackerIntrinsics::PSM_MONO_TRACKER_INTRINSICS:
+            out_screen_size->x= tracker->tracker_info.tracker_intrinsics.intrinsics.stereo.pixel_width;
+            out_screen_size->y= tracker->tracker_info.tracker_intrinsics.intrinsics.stereo.pixel_height;
+            break;
+        }
+        
+        result= PSMResult_Success;
+    }
+
+    return result;
+}
+
+PSMResult PSM_GetTrackerIntrinsics(PSMTrackerID tracker_id, PSMTrackerIntrinsics *out_intrinsics)
 {
     PSMResult result= PSMResult_Error;
 
     if (g_psm_client != nullptr && IS_VALID_TRACKER_INDEX(tracker_id))
     {
 		PSMTracker *tracker= g_psm_client->get_tracker_view(tracker_id);
-		PSMClientTrackerInfo *tracker_info= &tracker->tracker_info;
 
-		PSMVector3f basis_x= {tracker_info->tracker_focal_lengths.x, 0.f, tracker_info->tracker_principal_point.x};
-		PSMVector3f basis_y= {0.f, tracker_info->tracker_focal_lengths.y, tracker_info->tracker_principal_point.y};
-		PSMVector3f basis_z= {0.f, 0.f, 1.f};
-
-		*out_matrix= PSM_Matrix3fCreate(&basis_x, &basis_y, &basis_z);
+        *out_intrinsics= tracker->tracker_info.tracker_intrinsics;
 		result= PSMResult_Success;
 	}
 
@@ -1221,10 +1242,11 @@ PSMResult PSM_GetTrackerFrustum(PSMTrackerID tracker_id, PSMFrustum *out_frustum
 		PSM_FrustumSetPose(out_frustum, &tracker_info->tracker_pose);
 
 		// Convert the FOV angles to radians for rendering purposes
-		out_frustum->HFOV = tracker_info->tracker_hfov * k_degrees_to_radians;
-		out_frustum->VFOV = tracker_info->tracker_vfov * k_degrees_to_radians;
-		out_frustum->zNear = tracker_info->tracker_znear;
-		out_frustum->zFar = tracker_info->tracker_zfar;
+        const PSMMonoTrackerIntrinsics &mono_intrinsics= tracker_info->tracker_intrinsics.intrinsics.mono;
+		out_frustum->HFOV = mono_intrinsics.hfov * k_degrees_to_radians;
+		out_frustum->VFOV = mono_intrinsics.vfov * k_degrees_to_radians;
+		out_frustum->zNear = mono_intrinsics.znear;
+		out_frustum->zFar = mono_intrinsics.zfar;
 
 		result= PSMResult_Success;
 	}

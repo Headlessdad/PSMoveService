@@ -31,37 +31,14 @@ public:
     bool is_valid;
     long max_poll_failure_count;
 
-	double frame_width;
-	double frame_height;
 	double frame_rate;
     double exposure;
 	double gain;
 
-    double hfov;
-    double vfov;
-    double zNear;
-    double zFar;
-
     std::string left_camera_usb_path;
     std::string right_camera_usb_path;
 
-    std::array<double, 3*3> left_intrinsic_matrix;
-    std::array<double, 3*3> right_intrinsic_matrix;
-
-    std::array<double, 5> left_distortion_cofficients;
-    std::array<double, 5> right_distortion_cofficients;
-
-    std::array<double, 3*3> left_rectification_rotation;
-    std::array<double, 3*3> right_rectification_rotation;
-
-    std::array<double, 3*4> left_rectification_projection;
-    std::array<double, 3*4> right_rectification_projection;
-
-    std::array<double, 3*3> rotation_between_cameras;
-    std::array<double, 3> translation_between_cameras;
-    std::array<double, 3*3> essential_matrix;
-    std::array<double, 3*3> fundamental_matrix;
-
+    CommonStereoTrackerIntrinsics tracker_intrinsics;
     CommonDevicePose pose;
 	CommonHSVColorRangeTable SharedColorPresets;
 	std::vector<CommonHSVColorRangeTable> DeviceColorPresets;
@@ -122,18 +99,8 @@ public:
     double getExposure() const override;
 	void setGain(double value, bool bUpdateConfig) override;
 	double getGain() const override;
-    void getCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float &outFocalLengthX, float &outFocalLengthY,
-        float &outPrincipalX, float &outPrincipalY,
-        float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
-        float &outDistortionP1, float &outDistortionP2) const override;
-    void setCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float focalLengthX, float focalLengthY,
-        float principalX, float principalY,
-        float distortionK1, float distortionK2, float distortionK3,
-        float distortionP1, float distortionP2) override;
+    void getCameraIntrinsics(CommonTrackerIntrinsics &out_tracker_intrinsics) const override;
+    void setCameraIntrinsics(const CommonTrackerIntrinsics &tracker_intrinsics) override;
     CommonDevicePose getTrackerPose() const override;
     void setTrackerPose(const struct CommonDevicePose *pose) override;
     void getFOV(float &outHFOV, float &outVFOV) const override;

@@ -28,6 +28,12 @@ typedef struct
     float x, y;
 } PSMVector2f;
 
+/// A 3D vector with double components.
+typedef struct
+{
+    double x, y, z;
+} PSMVector3d;
+
 /// A 3D vector with float components.
 typedef struct
 {
@@ -47,6 +53,22 @@ typedef struct
 {
     float m[3][3]; 
 } PSMMatrix3f;
+
+/** A 3x3 matrix with double components
+	storage is row major order: [x0,x1,x2,y0,y1,y2,z0,z1,z2]
+ */
+typedef struct
+{
+    double m[3][3]; 
+} PSMMatrix3d;
+
+/** A 3x4 matrix with double components
+	storage is row major order: [x0,x1,x2,x3,y0,y1,y2,y3,z0,z1,z2,z3]
+ */
+typedef struct
+{
+    double m[3][4]; 
+} PSMMatrix34d;
 
 /// A quaternion rotation.
 typedef struct
@@ -241,6 +263,16 @@ PSM_PUBLIC_FUNCTION(PSMVector3f) PSM_QuatfRotateVector(const PSMQuatf *q, const 
 PSM_PUBLIC_FUNCTION(float) PSM_QuatfLength(const PSMQuatf *q);
 /// Computes the normalized version of a quaternion, returning a default quaternion in the event of a near zero length quaternion
 PSM_PUBLIC_FUNCTION(PSMQuatf) PSM_QuatfNormalizeWithDefault(const PSMQuatf *q, const PSMQuatf *default_result);
+
+// PSMMatrix3d Methods
+/// Create a 3x3 matrix from a set of 3 basis vectors (might not be ortho-normal)
+PSM_PUBLIC_FUNCTION(PSMMatrix3d) PSM_Matrix3dCreate(const PSMVector3d *basis_x, const PSMVector3d *basis_y, const PSMVector3d *basis_z);
+/// Extract the x-axis basis vector from a 3x3 matrix
+PSM_PUBLIC_FUNCTION(PSMVector3d) PSM_Matrix3dBasisX(const PSMMatrix3d *m);
+/// Extract the y-axis basis vector from a 3x3 matrix
+PSM_PUBLIC_FUNCTION(PSMVector3d) PSM_Matrix3dBasisY(const PSMMatrix3d *m);
+/// Extract the z-axis basis vector from a 3x3 matrix
+PSM_PUBLIC_FUNCTION(PSMVector3d) PSM_Matrix3dBasisZ(const PSMMatrix3d *m);
 
 // PSMMatrix3f Methods
 /// Create a 3x3 matrix from a set of 3 basis vectors (might not be ortho-normal)

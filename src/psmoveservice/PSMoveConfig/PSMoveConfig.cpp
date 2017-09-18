@@ -75,6 +75,45 @@ PSMoveConfig::load()
     return bLoadedOk;
 }
 
+void PSMoveConfig::writeDistortionCoefficients(
+    boost::property_tree::ptree &pt,
+    const char *coefficients_name,
+    const struct CommonDistortionCoefficients *coefficients)
+{
+    char full_property_name[256];
+
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.k1", coefficients_name);
+    pt.put(full_property_name, coefficients->k1);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.k2", coefficients_name);
+    pt.put(full_property_name, coefficients->k2);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.k3", coefficients_name);
+    pt.put(full_property_name, coefficients->k3);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.p1", coefficients_name);
+    pt.put(full_property_name, coefficients->p1);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.p2", coefficients_name);
+    pt.put(full_property_name, coefficients->p2);
+}
+
+void PSMoveConfig::readDistortionCoefficients(
+    const boost::property_tree::ptree &pt,
+    const char *coefficients_name,
+    struct CommonDistortionCoefficients *outCoefficients,
+    const struct CommonDistortionCoefficients *defaultCoefficients)
+{
+    char full_property_name[256];
+
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.k1", coefficients_name);
+    outCoefficients->k1= pt.get<double>(full_property_name, defaultCoefficients->k1);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.k2", coefficients_name);
+    outCoefficients->k2= pt.get<double>(full_property_name, defaultCoefficients->k2);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.k3", coefficients_name);
+    outCoefficients->k3= pt.get<double>(full_property_name, defaultCoefficients->k3);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.p1", coefficients_name);
+    outCoefficients->p1= pt.get<double>(full_property_name, defaultCoefficients->p1);
+    ServerUtility::format_string(full_property_name, sizeof(full_property_name), "%s.p2", coefficients_name);
+    outCoefficients->p2= pt.get<double>(full_property_name, defaultCoefficients->p2);
+}
+
 void
 PSMoveConfig::writeColorPropertyPresetTable(
 	const CommonHSVColorRangeTable *table,

@@ -34,62 +34,63 @@ VirtualStereoTrackerConfig::VirtualStereoTrackerConfig(const std::string &fnameb
     : PSMoveConfig(fnamebase)
     , is_valid(false)
     , max_poll_failure_count(100)
-	, frame_width(640)
-	, frame_height(480)
 	, frame_rate(40)
     , exposure(32)
     , gain(32)
-    , hfov(60.0) // degrees
-    , vfov(45.0) // degrees
-    , zNear(10.0) // cm
-    , zFar(200.0) // cm
     , left_camera_usb_path("")
     , right_camera_usb_path("")
-    , left_intrinsic_matrix({{ 
-            554.2563, 0, 320.0, // f_x, 0, c_x
-            0, 554.2563, 240.0, // 0, f_y, c_y
-            0, 0, 1}})
-    , right_intrinsic_matrix({{
-            554.2563, 0, 320.0,  // f_x, 0, c_x
-            0, 554.2563, 240.0,  // 0, f_y, c_y
-            0, 0, 1}})
-    , left_distortion_cofficients({{
-            -0.10771770030260086, 0.1213262677192688, 0.04875476285815239, // K1, K2, K3
-            0.00091733073350042105, 0.00010589254816295579}})  // P1, P2
-    , right_distortion_cofficients({{
-            -0.10771770030260086, 0.1213262677192688, 0.04875476285815239, // K1, K2, K3
-            0.00091733073350042105, 0.00010589254816295579}})  // P1, P2
-    , left_rectification_rotation({{
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0}})
-    , right_rectification_rotation({{
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0}})
-    , left_rectification_projection({{
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,}})
-    , right_rectification_projection({{
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,}})
-    , rotation_between_cameras({{
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0}})
-    , translation_between_cameras({{0.0, 0.0, 0.0}})
-    , essential_matrix({{
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0}})
-    , fundamental_matrix({{
-            1.0, 0.0, 0.0,
-            0.0, 1.0, 0.0,
-            0.0, 0.0, 1.0}})
 {
     pose.clear();
+
+	tracker_intrinsics.pixel_width= 640;
+	tracker_intrinsics.pixel_height= 480;
+    tracker_intrinsics.hfov= 60.0; // degrees
+    tracker_intrinsics.vfov= 45.0; // degrees
+    tracker_intrinsics.znear= 10.0; // cm
+    tracker_intrinsics.zfar= 200.0; // cm
+    tracker_intrinsics.left_camera_matrix= {{ 
+        554.2563, 0, 320.0, // f_x, 0, c_x
+        0, 554.2563, 240.0, // 0, f_y, c_y
+        0, 0, 1}};
+    tracker_intrinsics.right_camera_matrix= {{
+        554.2563, 0, 320.0,  // f_x, 0, c_x
+        0, 554.2563, 240.0,  // 0, f_y, c_y
+        0, 0, 1}};
+    tracker_intrinsics.left_distortion_coefficients= {
+        -0.10771770030260086, 0.1213262677192688, 0.04875476285815239, // K1, K2, K3
+        0.00091733073350042105, 0.00010589254816295579};  // P1, P2
+    tracker_intrinsics.right_distortion_coefficients= {
+        -0.10771770030260086, 0.1213262677192688, 0.04875476285815239, // K1, K2, K3
+        0.00091733073350042105, 0.00010589254816295579};  // P1, P2
+    tracker_intrinsics.left_rectification_rotation= {{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0}};
+    tracker_intrinsics.right_rectification_rotation= {{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0}};
+    tracker_intrinsics.left_rectification_projection= {{
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,}};
+    tracker_intrinsics.right_rectification_projection= {{
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,}};
+    tracker_intrinsics.rotation_between_cameras= {{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0}};
+    tracker_intrinsics.translation_between_cameras= {{0.0, 0.0, 0.0}};
+    tracker_intrinsics.essential_matrix= {{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0}};
+    tracker_intrinsics.fundamental_matrix= {{
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0}};
 
 	SharedColorPresets.table_name.clear();
     for (int preset_index = 0; preset_index < eCommonTrackingColorID::MAX_TRACKING_COLOR_TYPES; ++preset_index)
@@ -106,15 +107,15 @@ VirtualStereoTrackerConfig::config2ptree()
     pt.put("is_valid", is_valid);
     pt.put("version", VirtualStereoTrackerConfig::CONFIG_VERSION);
     pt.put("max_poll_failure_count", max_poll_failure_count);
-	pt.put("frame_width", frame_width);
-	pt.put("frame_height", frame_height);
+	pt.put("frame_width", tracker_intrinsics.pixel_width);
+	pt.put("frame_height", tracker_intrinsics.pixel_width);
 	pt.put("frame_rate", frame_rate);
     pt.put("exposure", exposure);
 	pt.put("gain", gain);
-    pt.put("hfov", hfov);
-    pt.put("vfov", vfov);
-    pt.put("zNear", zNear);
-    pt.put("zFar", zFar);
+    pt.put("hfov", tracker_intrinsics.hfov);
+    pt.put("vfov", tracker_intrinsics.vfov);
+    pt.put("zNear", tracker_intrinsics.znear);
+    pt.put("zFar", tracker_intrinsics.zfar);
 
     pt.put("pose.orientation.w", pose.Orientation.w);
     pt.put("pose.orientation.x", pose.Orientation.x);
@@ -127,22 +128,22 @@ VirtualStereoTrackerConfig::config2ptree()
     pt.put("left_camera_usb_path", left_camera_usb_path);
     pt.put("right_camera_usb_path", right_camera_usb_path);
 
-    writeArray(pt, "left_intrinsic_matrix", left_intrinsic_matrix);
-    writeArray(pt, "right_intrinsic_matrix", right_intrinsic_matrix);
+    writeArray(pt, "left_camera_matrix", tracker_intrinsics.left_camera_matrix);
+    writeArray(pt, "right_camera_matrix", tracker_intrinsics.right_camera_matrix);
 
-    writeArray(pt, "left_distortion_cofficients", left_distortion_cofficients);
-    writeArray(pt, "right_distortion_cofficients", right_distortion_cofficients);
+    writeDistortionCoefficients(pt, "left_distortion_cofficients", &tracker_intrinsics.left_distortion_coefficients);
+    writeDistortionCoefficients(pt, "right_distortion_cofficients", &tracker_intrinsics.right_distortion_coefficients);
 
-    writeArray(pt, "left_rectification_rotation", left_rectification_rotation);
-    writeArray(pt, "right_rectification_rotation", right_rectification_rotation);
+    writeArray(pt, "left_rectification_rotation", tracker_intrinsics.left_rectification_rotation);
+    writeArray(pt, "right_rectification_rotation", tracker_intrinsics.right_rectification_rotation);
 
-    writeArray(pt, "left_rectification_projection", left_rectification_projection);
-    writeArray(pt, "right_rectification_projection", right_rectification_projection);
+    writeArray(pt, "left_rectification_projection", tracker_intrinsics.left_rectification_projection);
+    writeArray(pt, "right_rectification_projection", tracker_intrinsics.right_rectification_projection);
 
-    writeArray(pt, "rotation_between_cameras", rotation_between_cameras);
-    writeArray(pt, "translation_between_cameras", translation_between_cameras);
-    writeArray(pt, "essential_matrix", essential_matrix);
-    writeArray(pt, "fundamental_matrix", fundamental_matrix);
+    writeArray(pt, "rotation_between_cameras", tracker_intrinsics.rotation_between_cameras);
+    writeArray(pt, "translation_between_cameras", tracker_intrinsics.translation_between_cameras);
+    writeArray(pt, "essential_matrix", tracker_intrinsics.essential_matrix);
+    writeArray(pt, "fundamental_matrix", tracker_intrinsics.fundamental_matrix);
 
 	writeColorPropertyPresetTable(&SharedColorPresets, pt);
 
@@ -162,35 +163,40 @@ VirtualStereoTrackerConfig::ptree2config(const boost::property_tree::ptree &pt)
     {
         is_valid = pt.get<bool>("is_valid", false);
         max_poll_failure_count = pt.get<long>("max_poll_failure_count", 100);
-		frame_width = pt.get<double>("frame_width", 640);
-		frame_height = pt.get<double>("frame_height", 480);
 		frame_rate = pt.get<double>("frame_rate", 40);
         exposure = pt.get<double>("exposure", 32);
 		gain = pt.get<double>("gain", 32);
-        hfov = pt.get<double>("hfov", 60.0);
-        vfov = pt.get<double>("vfov", 45.0);
-        zNear = pt.get<double>("zNear", 10.0);
-        zFar = pt.get<double>("zFar", 200.0);
 
         left_camera_usb_path= pt.get<std::string>("left_camera_usb_path");
         right_camera_usb_path= pt.get<std::string>("right_camera_usb_path");
 
-        left_intrinsic_matrix= readArray<double,3*3>(pt, "left_intrinsic_matrix");
-        right_intrinsic_matrix= readArray<double,3*3>(pt, "right_intrinsic_matrix");
+		tracker_intrinsics.pixel_width = pt.get<float>("frame_width", 640.f);
+		tracker_intrinsics.pixel_height = pt.get<float>("frame_height", 480.f);
+        tracker_intrinsics.hfov = pt.get<float>("hfov", 60.f);
+        tracker_intrinsics.vfov = pt.get<float>("vfov", 45.f);
+        tracker_intrinsics.znear = pt.get<float>("zNear", 10.f);
+        tracker_intrinsics.zfar = pt.get<float>("zFar", 200.f);
 
-        left_distortion_cofficients= readArray<double,5>(pt, "left_distortion_cofficients");
-        right_distortion_cofficients= readArray<double,5>(pt, "right_distortion_cofficients");
+        tracker_intrinsics.left_camera_matrix= readArray<double,3*3>(pt, "left_camera_matrix");
+        tracker_intrinsics.right_camera_matrix= readArray<double,3*3>(pt, "right_camera_matrix");
 
-        left_rectification_rotation= readArray<double,3*3>(pt, "left_rectification_rotation");
-        right_rectification_rotation= readArray<double,3*3>(pt, "right_rectification_rotation");
+        readDistortionCoefficients(pt, "left_distortion_cofficients", 
+            &tracker_intrinsics.left_distortion_coefficients, 
+            &tracker_intrinsics.left_distortion_coefficients);
+        readDistortionCoefficients(pt, "right_distortion_cofficients", 
+            &tracker_intrinsics.right_distortion_coefficients, 
+            &tracker_intrinsics.right_distortion_coefficients);
 
-        left_rectification_projection= readArray<double,3*4>(pt, "left_rectification_projection");
-        right_rectification_projection= readArray<double,3*4>(pt, "right_rectification_projection");
+        tracker_intrinsics.left_rectification_rotation= readArray<double,3*3>(pt, "left_rectification_rotation");
+        tracker_intrinsics.right_rectification_rotation= readArray<double,3*3>(pt, "right_rectification_rotation");
 
-        rotation_between_cameras= readArray<double,3*3>(pt, "rotation_between_cameras");
-        translation_between_cameras= readArray<double,3>(pt, "translation_between_cameras");
-        essential_matrix= readArray<double,3*3>(pt, "essential_matrix");
-        fundamental_matrix= readArray<double,3*3>(pt, "fundamental_matrix");
+        tracker_intrinsics.left_rectification_projection= readArray<double,3*4>(pt, "left_rectification_projection");
+        tracker_intrinsics.right_rectification_projection= readArray<double,3*4>(pt, "right_rectification_projection");
+
+        tracker_intrinsics.rotation_between_cameras= readArray<double,3*3>(pt, "rotation_between_cameras");
+        tracker_intrinsics.translation_between_cameras= readArray<double,3>(pt, "translation_between_cameras");
+        tracker_intrinsics.essential_matrix= readArray<double,3*3>(pt, "essential_matrix");
+        tracker_intrinsics.fundamental_matrix= readArray<double,3*3>(pt, "fundamental_matrix");
 
         pose.Orientation.w = pt.get<float>("pose.orientation.w", 1.0);
         pose.Orientation.x = pt.get<float>("pose.orientation.x", 0.0);
@@ -473,11 +479,11 @@ bool VirtualStereoTracker::open(const DeviceEnumerator *enumerator)
     {
         CaptureData = new VirtualStereoCaptureData;
 
-        LeftTracker->setFrameWidth(cfg.frame_width, false);
+        LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
         LeftTracker->setExposure(cfg.exposure, false);
         LeftTracker->setGain(cfg.gain, false);
         LeftTracker->setFrameRate(cfg.frame_rate, false);
-        RightTracker->setFrameWidth(cfg.frame_width, false);
+        RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_height, false);
         RightTracker->setExposure(cfg.exposure, false);
         RightTracker->setGain(cfg.gain, false);
         RightTracker->setFrameRate(cfg.frame_rate, false);
@@ -632,13 +638,13 @@ void VirtualStereoTracker::loadSettings()
 
     cfg.load();
 
-	if (leftFrameWidth != cfg.frame_width)
+	if (leftFrameWidth != cfg.tracker_intrinsics.pixel_width)
 	{
-		LeftTracker->setFrameWidth(cfg.frame_width, false);
+		LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
 	}
-	if (rightFrameWidth != cfg.frame_width)
+	if (rightFrameWidth != cfg.tracker_intrinsics.pixel_width)
 	{
-		RightTracker->setFrameWidth(cfg.frame_width, false);
+		RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
 	}
 
 	if (leftFrameExposure != cfg.exposure)
@@ -676,12 +682,12 @@ void VirtualStereoTracker::saveSettings()
 
 void VirtualStereoTracker::setFrameWidth(double value, bool bUpdateConfig)
 {
-	LeftTracker->setFrameWidth(cfg.frame_width, false);
-    RightTracker->setFrameWidth(cfg.frame_width, false);
+	LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+    RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
 
 	if (bUpdateConfig)
 	{
-		cfg.frame_width = value;
+		cfg.tracker_intrinsics.pixel_width = static_cast<float>(value);
 	}
 }
 
@@ -693,12 +699,12 @@ double VirtualStereoTracker::getFrameWidth() const
 
 void VirtualStereoTracker::setFrameHeight(double value, bool bUpdateConfig)
 {
-	LeftTracker->setFrameHeight(cfg.frame_height, false);
-    RightTracker->setFrameHeight(cfg.frame_height, false);
+	LeftTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
+    RightTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
 
 	if (bUpdateConfig)
 	{
-		cfg.frame_height = value;
+		cfg.tracker_intrinsics.pixel_height = static_cast<float>(value);
 	}
 }
 
@@ -760,59 +766,17 @@ double VirtualStereoTracker::getGain() const
 }
 
 void VirtualStereoTracker::getCameraIntrinsics(
-    ITrackerInterface::eTrackerVideoSection section,
-    float &outFocalLengthX, float &outFocalLengthY,
-    float &outPrincipalX, float &outPrincipalY,
-    float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
-    float &outDistortionP1, float &outDistortionP2) const
+    CommonTrackerIntrinsics &out_tracker_intrinsics) const
 {
-    //###HipsterSloth $TODO
-    switch (section)
-    {
-    case ITrackerInterface::LeftSection:
-        //outFocalLengthX = static_cast<float>(cfg.focalLengthX);
-        //outFocalLengthY = static_cast<float>(cfg.focalLengthY);
-        //outPrincipalX = static_cast<float>(cfg.principalX);
-        //outPrincipalY = static_cast<float>(cfg.principalY);
-        //outDistortionK1 = static_cast<float>(cfg.distortionK1);
-        //outDistortionK2 = static_cast<float>(cfg.distortionK2);
-        //outDistortionK3 = static_cast<float>(cfg.distortionK3);
-        //outDistortionP1 = static_cast<float>(cfg.distortionP1);
-        //outDistortionP2 = static_cast<float>(cfg.distortionP2);
-        break;
-    case ITrackerInterface::RightSection:
-        break;
-    default:
-        break;
-    }
+    out_tracker_intrinsics.intrinsics_type= CommonTrackerIntrinsics::STEREO_TRACKER_INTRINSICS;
+    out_tracker_intrinsics.stereo_intrinsics= cfg.tracker_intrinsics;
 }
 
 void VirtualStereoTracker::setCameraIntrinsics(
-    ITrackerInterface::eTrackerVideoSection section,
-    float focalLengthX, float focalLengthY,
-    float principalX, float principalY,
-    float distortionK1, float distortionK2, float distortionK3,
-    float distortionP1, float distortionP2)
+    const CommonTrackerIntrinsics &tracker_intrinsics)
 {
-    //###HipsterSloth $TODO
-    switch (section)
-    {
-    case ITrackerInterface::LeftSection:
-        //cfg.focalLengthX = focalLengthX;
-        //cfg.focalLengthY = focalLengthY;
-        //cfg.principalX = principalX;
-        //cfg.principalY = principalY;
-        //cfg.distortionK1 = distortionK1;
-        //cfg.distortionK2 = distortionK2;
-        //cfg.distortionK3 = distortionK3;
-        //cfg.distortionP1 = distortionP1;
-        //cfg.distortionP2 = distortionP2;
-        break;
-    case ITrackerInterface::RightSection:
-        break;
-    default:
-        break;
-    }
+    assert(tracker_intrinsics.intrinsics_type == CommonTrackerIntrinsics::STEREO_TRACKER_INTRINSICS);
+    cfg.tracker_intrinsics= tracker_intrinsics.stereo_intrinsics;
 }
 
 CommonDevicePose VirtualStereoTracker::getTrackerPose() const
@@ -829,14 +793,14 @@ void VirtualStereoTracker::setTrackerPose(
 
 void VirtualStereoTracker::getFOV(float &outHFOV, float &outVFOV) const
 {
-    outHFOV = static_cast<float>(cfg.hfov);
-    outVFOV = static_cast<float>(cfg.vfov);
+    outHFOV = static_cast<float>(cfg.tracker_intrinsics.hfov);
+    outVFOV = static_cast<float>(cfg.tracker_intrinsics.vfov);
 }
 
 void VirtualStereoTracker::getZRange(float &outZNear, float &outZFar) const
 {
-    outZNear = static_cast<float>(cfg.zNear);
-    outZFar = static_cast<float>(cfg.zFar);
+    outZNear = static_cast<float>(cfg.tracker_intrinsics.znear);
+    outZFar = static_cast<float>(cfg.tracker_intrinsics.zfar);
 }
 
 void VirtualStereoTracker::gatherTrackerOptions(

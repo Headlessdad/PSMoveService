@@ -840,12 +840,16 @@ computeTrackerCameraPose(
     const PSMTracker *trackerView,
     TrackerRelativePoseStatistics &trackerCoregData)
 {
+    // Get the tracker intrinsic properties
+    PSMTrackerIntrinsics cameraIntrinsics;
+	PSM_GetTrackerIntrinsics(trackerView->tracker_info.tracker_id, &cameraIntrinsics);
+
     // Get the pixel width and height of the tracker image
-    const PSMVector2f trackerPixelDimensions = trackerView->tracker_info.tracker_screen_dimensions;
+    PSMVector2f trackerPixelDimensions;
+    PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &trackerPixelDimensions);
 
     // Get the tracker "intrinsic" matrix that encodes the camera FOV
-    PSMMatrix3f cameraMatrix;
-	PSM_GetTrackerIntrinsicMatrix(trackerView->tracker_info.tracker_id, &cameraMatrix);
+    const PSMMatrix3d &cameraMatrix= cameraIntrinsics.intrinsics.mono.camera_matrix;
     cv::Matx33f cvCameraMatrix = psmove_matrix3x3_to_cv_mat33f(cameraMatrix);
 
     // Copy the object/image point mappings into OpenCV format

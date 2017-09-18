@@ -1,11 +1,16 @@
 //-- includes -----
 #include "ClientRequestManager.h"
 #include "ClientNetworkManager.h"
+#include "ClientLog.h"
 #include "PSMoveProtocolInterface.h"
 #include "PSMoveProtocol.pb.h"
 #include <cassert>
 #include <map>
 #include <utility>
+
+#ifdef _MSC_VER
+	#pragma warning(disable:4996)  // ignore strncpy warning
+#endif
 
 //-- definitions -----
 struct RequestContext
@@ -255,7 +260,7 @@ public:
         controller_list->count = dest_controller_count;
     }
 
-    inline PSMPosef protocol_pose_to_psmove_pose(const PSMoveProtocol::Pose &pose)
+    inline PSMPosef protocol_pose_to_psm_pose(const PSMoveProtocol::Pose &pose)
     {
         PSMPosef result;
 
@@ -271,6 +276,44 @@ public:
         return result;
     }
 
+    inline void protocol_distortion_to_psm_distortion(
+        const PSMoveProtocol::TrackerIntrinsics_DistortionCoefficients &d,
+        PSMDistortionCoefficients &result)
+    {
+        result.k1= d.k1();
+        result.k3= d.k2();
+        result.k3= d.k3();
+        result.p1= d.p1();
+        result.p2= d.p2();
+    }
+
+    inline void protocol_vec3_to_psm_vec3d(
+        const PSMoveProtocol::DoubleVector &v,
+        PSMVector3d &result)
+    {
+        result.x= v.i();
+        result.y= v.j();
+        result.z= v.k();
+    }
+
+    inline void protocol_mat33_to_psm_mat33d(
+        const PSMoveProtocol::DoubleMatrix33 &m,
+        PSMMatrix3d &result)
+    {
+        result.m[0][0]= m.m00(); result.m[0][1]= m.m01(); result.m[0][2]= m.m02();
+        result.m[1][0]= m.m10(); result.m[1][1]= m.m11(); result.m[1][2]= m.m12();
+        result.m[2][0]= m.m20(); result.m[2][1]= m.m21(); result.m[2][2]= m.m22();
+    }
+
+    inline void protocol_mat34_to_psm_mat34d(
+        const PSMoveProtocol::DoubleMatrix34 &m,
+        PSMMatrix34d &result)
+    {
+        result.m[0][0]= m.m00(); result.m[0][1]= m.m01(); result.m[0][2]= m.m02(); result.m[0][3]= m.m03();
+        result.m[1][0]= m.m10(); result.m[1][1]= m.m11(); result.m[1][2]= m.m12(); result.m[1][3]= m.m13();
+        result.m[2][0]= m.m20(); result.m[2][1]= m.m21(); result.m[2][2]= m.m22(); result.m[2][3]= m.m23();
+    }
+
     void build_tracker_list_response_message(
         ResponsePtr response,
         PSMTrackerList *tracker_list)
@@ -282,6 +325,7 @@ public:
             && tracker_count < PSMOVESERVICE_MAX_TRACKER_COUNT)
         {
             const auto &TrackerResponse = response->result_tracker_list().trackers(tracker_count);
+            const PSMoveProtocol::TrackerIntrinsics &protocol_intrinsics= TrackerResponse.tracker_intrinsics();
             PSMClientTrackerInfo &TrackerInfo= tracker_list->trackers[tracker_count];
 
             TrackerInfo.tracker_id = TrackerResponse.tracker_id();
@@ -316,30 +360,58 @@ public:
                 assert(0 && "unreachable");
             }
 
-            TrackerInfo.tracker_focal_lengths = 
-                { TrackerResponse.tracker_focal_lengths().x(), TrackerResponse.tracker_focal_lengths().y() };
-            TrackerInfo.tracker_principal_point =
-                { TrackerResponse.tracker_principal_point().x(), TrackerResponse.tracker_principal_point().y() };
-            TrackerInfo.tracker_screen_dimensions =
-                { TrackerResponse.tracker_screen_dimensions().x(), TrackerResponse.tracker_screen_dimensions().y() };
-            TrackerInfo.tracker_section_count= TrackerResponse.tracker_section_count();
-
-            TrackerInfo.tracker_hfov = TrackerResponse.tracker_hfov();
-            TrackerInfo.tracker_vfov = TrackerResponse.tracker_vfov();
-
-            TrackerInfo.tracker_znear = TrackerResponse.tracker_znear();
-            TrackerInfo.tracker_zfar = TrackerResponse.tracker_zfar();
-
-            TrackerInfo.tracker_k1 = TrackerResponse.tracker_k1();
-            TrackerInfo.tracker_k2 = TrackerResponse.tracker_k2();
-            TrackerInfo.tracker_k3 = TrackerResponse.tracker_k3();
-            TrackerInfo.tracker_p1 = TrackerResponse.tracker_p1();
-            TrackerInfo.tracker_p2 = TrackerResponse.tracker_p2();
-
             strncpy(TrackerInfo.device_path, TrackerResponse.device_path().c_str(), sizeof(TrackerInfo.device_path));
             strncpy(TrackerInfo.shared_memory_name, TrackerResponse.shared_memory_name().c_str(), sizeof(TrackerInfo.shared_memory_name));
 
-            TrackerInfo.tracker_pose= protocol_pose_to_psmove_pose(TrackerResponse.tracker_pose());
+            if (protocol_intrinsics.has_mono_intrinsics())
+            {
+                const auto &protocol_mono_intrinsics= protocol_intrinsics.mono_intrinsics();
+                PSMMonoTrackerIntrinsics &mono_intrinsics= TrackerInfo.tracker_intrinsics.intrinsics.mono;
+
+                mono_intrinsics.pixel_width= protocol_mono_intrinsics.tracker_screen_dimensions().x();
+                mono_intrinsics.pixel_height= protocol_mono_intrinsics.tracker_screen_dimensions().y();
+                mono_intrinsics.hfov= protocol_mono_intrinsics.hfov();
+                mono_intrinsics.vfov= protocol_mono_intrinsics.vfov();
+                mono_intrinsics.znear= protocol_mono_intrinsics.znear();
+                mono_intrinsics.zfar= protocol_mono_intrinsics.zfar();
+                protocol_mat33_to_psm_mat33d(protocol_mono_intrinsics.camera_matrix(), mono_intrinsics.camera_matrix);
+                protocol_distortion_to_psm_distortion(protocol_mono_intrinsics.distortion_coefficients(), mono_intrinsics.distortion_coefficients);
+
+                TrackerInfo.tracker_intrinsics.intrinsics_type= PSMTrackerIntrinsics::PSM_MONO_TRACKER_INTRINSICS;
+            }
+            else if (protocol_intrinsics.has_stereo_intrinsics())
+            {
+                const auto &protocol_stereo_intrinsics= protocol_intrinsics.stereo_intrinsics();
+                PSMStereoTrackerIntrinsics &stereo_intrinsics= TrackerInfo.tracker_intrinsics.intrinsics.stereo;
+
+                stereo_intrinsics.pixel_width= protocol_stereo_intrinsics.tracker_screen_dimensions().x();
+                stereo_intrinsics.pixel_height= protocol_stereo_intrinsics.tracker_screen_dimensions().y();
+                stereo_intrinsics.hfov= protocol_stereo_intrinsics.hfov();
+                stereo_intrinsics.vfov= protocol_stereo_intrinsics.vfov();
+                stereo_intrinsics.znear= protocol_stereo_intrinsics.znear();
+                stereo_intrinsics.zfar= protocol_stereo_intrinsics.zfar();
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.left_camera_matrix(), stereo_intrinsics.left_camera_matrix);
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.right_camera_matrix(), stereo_intrinsics.right_camera_matrix);
+                protocol_distortion_to_psm_distortion(protocol_stereo_intrinsics.left_distortion_coefficients(), stereo_intrinsics.left_distortion_coefficients);
+                protocol_distortion_to_psm_distortion(protocol_stereo_intrinsics.right_distortion_coefficients(), stereo_intrinsics.right_distortion_coefficients);
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.left_rectification_rotation(), stereo_intrinsics.left_rectification_rotation);
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.right_rectification_rotation(), stereo_intrinsics.right_rectification_rotation);
+                protocol_mat34_to_psm_mat34d(protocol_stereo_intrinsics.left_rectification_projection(), stereo_intrinsics.left_rectification_projection);
+                protocol_mat34_to_psm_mat34d(protocol_stereo_intrinsics.right_rectification_projection(), stereo_intrinsics.right_rectification_projection);
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.rotation_between_cameras(), stereo_intrinsics.rotation_between_cameras);
+                protocol_vec3_to_psm_vec3d(protocol_stereo_intrinsics.translation_between_cameras(), stereo_intrinsics.translation_between_cameras);
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.essential_matrix(), stereo_intrinsics.essential_matrix);
+                protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.fundamental_matrix(), stereo_intrinsics.fundamental_matrix);
+
+                TrackerInfo.tracker_intrinsics.intrinsics_type= PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS;
+            }
+            else
+            {
+                CLIENT_LOG_ERROR("build_tracker_list_response_message") << "Tracker id: " << TrackerInfo.tracker_id << " has no intrinsics set! Ignoring tracker entry.";
+                continue;
+            }
+
+            TrackerInfo.tracker_pose= protocol_pose_to_psm_pose(TrackerResponse.tracker_pose());
 
             ++tracker_count;
         }

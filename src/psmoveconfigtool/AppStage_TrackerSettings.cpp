@@ -4,6 +4,7 @@
 #include "AppStage_ColorCalibration.h"
 #include "AppStage_ComputeTrackerPoses.h"
 #include "AppStage_DistortionCalibration.h"
+#include "AppStage_StereoCalibration.h"
 #include "AppStage_MainMenu.h"
 #include "App.h"
 #include "Camera.h"
@@ -284,9 +285,19 @@ void AppStage_TrackerSettings::renderUI()
                     m_app->setAppStage(AppStage_TestTracker::APP_STAGE_NAME);
                 }
 
-                if (ImGui::Button("Calibrate Tracker Distortion"))
+                if (trackerInfo.tracker_intrinsics.intrinsics_type == PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS)
                 {
-                    m_app->setAppStage(AppStage_DistortionCalibration::APP_STAGE_NAME);
+                    if (ImGui::Button("Calibrate Stereo Tracker"))
+                    {
+                        m_app->setAppStage(AppStage_StereoCalibration::APP_STAGE_NAME);
+                    }
+                }
+                else
+                {
+                    if (ImGui::Button("Calibrate Tracker Distortion"))
+                    {
+                        m_app->setAppStage(AppStage_DistortionCalibration::APP_STAGE_NAME);
+                    }
                 }
             }
             else

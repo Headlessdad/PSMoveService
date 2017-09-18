@@ -114,18 +114,8 @@ public:
         const ServerTrackerView *tracker, const CommonDeviceTrackingProjection *tracker_relative_projection,
         const ServerTrackerView *other_tracker, const CommonDeviceTrackingProjection *other_tracker_relative_projection);
 
-    void getCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float &outFocalLengthX, float &outFocalLengthY,
-        float &outPrincipalX, float &outPrincipalY,
-        float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
-        float &outDistortionP1, float &outDistortionP2) const;
-    void setCameraIntrinsics(
-        ITrackerInterface::eTrackerVideoSection section,
-        float focalLengthX, float focalLengthY,
-        float principalX, float principalY,
-        float distortionK1, float distortionK2, float distortionK3,
-        float distortionP1, float distortionP2);
+    void getCameraIntrinsics(CommonTrackerIntrinsics &out_tracker_intrinsics) const;
+    void setCameraIntrinsics(const CommonTrackerIntrinsics &tracker_intrinsics);
 
     CommonDevicePose getTrackerPose() const;
     void setTrackerPose(const struct CommonDevicePose *pose);

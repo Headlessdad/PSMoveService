@@ -1180,33 +1180,15 @@ void ServerTrackerView::setGain(double value, bool bUpdateConfig)
 }
 
 void ServerTrackerView::getCameraIntrinsics(
-    ITrackerInterface::eTrackerVideoSection section,
-    float &outFocalLengthX, float &outFocalLengthY,
-    float &outPrincipalX, float &outPrincipalY,
-    float &outDistortionK1, float &outDistortionK2, float &outDistortionK3,
-    float &outDistortionP1, float &outDistortionP2) const
+    CommonTrackerIntrinsics &out_tracker_intrinsics) const
 {
-    m_device->getCameraIntrinsics(
-        section,
-        outFocalLengthX, outFocalLengthY,
-        outPrincipalX, outPrincipalY,
-        outDistortionK1, outDistortionK2, outDistortionK3,
-        outDistortionP1, outDistortionP2);
+    m_device->getCameraIntrinsics(out_tracker_intrinsics);
 }
 
 void ServerTrackerView::setCameraIntrinsics(
-    ITrackerInterface::eTrackerVideoSection section,
-    float focalLengthX, float focalLengthY,
-    float principalX, float principalY,
-    float distortionK1, float distortionK2, float distortionK3,
-    float distortionP1, float distortionP2)
+    const CommonTrackerIntrinsics &tracker_intrinsics)
 {
-    m_device->setCameraIntrinsics(
-        section,
-        focalLengthX, focalLengthY,
-        principalX, principalY,
-        distortionK1, distortionK2, distortionK3,
-        distortionP1, distortionP2);
+    m_device->setCameraIntrinsics(tracker_intrinsics);
 }
 
 CommonDevicePose ServerTrackerView::getTrackerPose() const
@@ -2201,18 +2183,47 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
                                                cv::Matx33f &intrinsicOut,
                                                cv::Matx<float, 5, 1> &distortionOut)
 {
-    tracker_device->getCameraIntrinsics(section,
-                                        intrinsicOut(0, 0), intrinsicOut(1, 1),  //F_PX, F_PY
-                                        intrinsicOut(0, 2), intrinsicOut(1, 2), //PrincipalX, Y
-                                        distortionOut(0, 0), distortionOut(1, 0), distortionOut(4, 0), //K1, K2, K3
-                                        distortionOut(2, 0), distortionOut(3, 0));  //P1, P2
-    
-    intrinsicOut(1, 1) *= -1;  //Negate F_PY because the screen coordinate system has +Y down.
+    CommonTrackerIntrinsics tracker_intrinsics;
+    tracker_device->getCameraIntrinsics(tracker_intrinsics);
 
-    // Fill the rest of the matrix with corrext values.
-                                intrinsicOut(0, 1) = 0.f;
-    intrinsicOut(1, 0) = 0.f;
-    intrinsicOut(2, 0) = 0.f;   intrinsicOut(2, 1) = 0.f;   intrinsicOut(2, 2) = 1.f;
+    std::array<double, 3*3> *camera_matrix= nullptr;
+    CommonDistortionCoefficients *distortion_coefficients= nullptr;
+
+    if (tracker_intrinsics.intrinsics_type == CommonTrackerIntrinsics::STEREO_TRACKER_INTRINSICS)
+    {
+        if (section == ITrackerInterface::LeftSection)
+        {
+            camera_matrix= &tracker_intrinsics.stereo_intrinsics.left_camera_matrix;
+            distortion_coefficients = &tracker_intrinsics.stereo_intrinsics.left_distortion_coefficients;
+        }
+        else if (section == ITrackerInterface::RightSection)
+        {
+            camera_matrix= &tracker_intrinsics.stereo_intrinsics.right_camera_matrix;
+            distortion_coefficients = &tracker_intrinsics.stereo_intrinsics.right_distortion_coefficients;
+        }
+    }
+    else if (tracker_intrinsics.intrinsics_type == CommonTrackerIntrinsics::MONO_TRACKER_INTRINSICS)
+    {
+        camera_matrix = &tracker_intrinsics.mono_intrinsics.camera_matrix;
+        distortion_coefficients = &tracker_intrinsics.mono_intrinsics.distortion_coefficients;
+    }
+
+    if (camera_matrix != nullptr && distortion_coefficients != nullptr)
+    {
+        std::array<double, 3*3> &m= *camera_matrix;
+   
+        // Fill the rest of the matrix with corrext values.
+        //Negate F_PY because the screen coordinate system has +Y down.
+        intrinsicOut(0, 0)= (float)m[0]; intrinsicOut(0, 1)=  (float)m[1]; intrinsicOut(0, 1)= (float)m[2];
+        intrinsicOut(1, 0)= (float)m[3]; intrinsicOut(1, 1)= -(float)m[4]; intrinsicOut(1, 2)= (float)m[5]; 
+        intrinsicOut(2, 0)= (float)m[6]; intrinsicOut(2, 1)= (float)m[7];  intrinsicOut(2, 2)= (float)m[8];
+
+        distortionOut(0, 0)= (float)distortion_coefficients->k1;
+        distortionOut(1, 0)= (float)distortion_coefficients->k2;
+        distortionOut(2, 0)= (float)distortion_coefficients->p1;
+        distortionOut(3, 0)= (float)distortion_coefficients->p2;
+        distortionOut(4, 0)= (float)distortion_coefficients->k3;
+    }
 }
 
 static cv::Matx34f computeOpenCVCameraPinholeMatrix(

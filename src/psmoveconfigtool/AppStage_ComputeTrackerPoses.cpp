@@ -1398,11 +1398,16 @@ void AppStage_ComputeTrackerPoses::handle_tracker_start_stream_response(
             // Open the shared memory that the video stream is being written to
             if (PSM_OpenTrackerVideoStream(trackerInfo.tracker_id) == PSMResult_Success)
             {
+                PSMVector2f screenSize;
+                PSM_GetTrackerScreenSize(trackerInfo.tracker_id, &screenSize);
+                const unsigned int frameWidth = static_cast<unsigned int>(screenSize.x);
+                const unsigned int frameHeight = static_cast<unsigned int>(screenSize.y);
+
                 // Create a texture to render the video frame to
                 trackerState.textureAsset = new TextureAsset();
                 trackerState.textureAsset->init(
-                    static_cast<unsigned int>(trackerInfo.tracker_screen_dimensions.x),
-                    static_cast<unsigned int>(trackerInfo.tracker_screen_dimensions.y),
+                    frameWidth,
+                    frameHeight,
                     GL_RGB, // texture format
                     GL_BGR, // buffer format
                     nullptr);
