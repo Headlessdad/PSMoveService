@@ -136,6 +136,7 @@ typedef enum
 {
     PSMTracker_None= -1,
     PSMTracker_PS3Eye,
+    PSMTracker_PS4Camera,
     PSMTracker_VirtualStereoCamera
 } PSMTrackerType;
 

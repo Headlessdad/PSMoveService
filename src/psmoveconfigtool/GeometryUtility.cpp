@@ -171,6 +171,28 @@ cv_mat33d_to_psmove_matrix3x3(const cv::Matx33d &in)
     return out;
 }
 
+PSMMatrix34d 
+cv_mat34d_to_psmove_matrix3x4(const cv::Matx34d &in)
+{
+    // Both OpenCV and PSMMatrix3f matrices are stored row-major
+    PSMMatrix34d out;
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 4; ++j)
+        {
+            out.m[i][j]= in(i, j);
+        }
+    }
+
+    return out;
+}
+
+PSMVector3d 
+cv_vec3d_to_psmove_psm_vector3d(const cv::Vec3d &in)
+{
+    return {in(0), in(1), in(2)};
+}
+
 // GLM Types to Eigen types
 Eigen::Matrix3f glm_mat3_to_eigen_matrix3f(const glm::mat3 &m)
 {

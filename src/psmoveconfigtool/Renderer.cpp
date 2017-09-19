@@ -946,7 +946,40 @@ void drawLineStrip(const glm::mat4 &transform, const glm::vec3 &color, const flo
     glPopMatrix();
 }
 
-void drawQuadList2d(const float trackerWidth, const float trackerHeight, const glm::vec3 &color, const float *points2d, const int point_count)
+inline glm::vec3 remapPointIntoSubWindow(
+    const float screenWidth, const float screenHeight,
+    const float windowLeft, const float windowTop,
+    const float windowRight, const float windowBottom,
+    const glm::vec3 &in_point)
+{
+    const float u= in_point.x / screenWidth;
+    const float v= in_point.y / screenHeight;
+
+    return glm::vec3(
+        (1.f-u)*windowLeft + u*windowRight,
+        (1.f-v)*windowTop + v*windowBottom,
+        in_point.z);
+}
+
+void drawQuadList2d(
+    const float trackerWidth, const float trackerHeight,
+    const glm::vec3 &color,
+    const float *points2d, const int point_count)
+{
+    drawQuadList2dInSubWindow(
+        trackerWidth, trackerHeight, 
+        0.f, 0.f,
+        trackerWidth-1.f, trackerHeight-1.f,
+        color, 
+        points2d, point_count);
+}
+
+void drawQuadList2dInSubWindow(
+    const float trackerWidth, const float trackerHeight, 
+    const float windowX0, const float windowY0,
+    const float windowX1, const float windowY1,
+    const glm::vec3 &color, 
+    const float *points2d, const int point_count)
 {
     assert(Renderer::getIsRenderingStage());
     assert((point_count % 4) == 0);
@@ -971,17 +1004,33 @@ void drawQuadList2d(const float trackerWidth, const float trackerHeight, const g
     glBegin(GL_LINES);
     for (int sampleIndex= 0; sampleIndex < point_count; sampleIndex+=4)
     {
-        glVertex3f(points2d[sampleIndex*2+0], points2d[sampleIndex*2+1], 0.5f);
-        glVertex3f(points2d[sampleIndex*2+2], points2d[sampleIndex*2+3], 0.5f);
+        const int sampleOffset= sampleIndex*2;
 
-        glVertex3f(points2d[sampleIndex*2+2], points2d[sampleIndex*2+3], 0.5f);
-        glVertex3f(points2d[sampleIndex*2+4], points2d[sampleIndex*2+5], 0.5f);
+        glm::vec3 prevRemappedVertex=
+            remapPointIntoSubWindow(
+                trackerWidth, trackerHeight,
+                windowX0, windowY0,
+                windowX1, windowY1,
+                glm::vec3(points2d[sampleOffset+6], points2d[sampleOffset+7], 0.5f));
 
-        glVertex3f(points2d[sampleIndex*2+4], points2d[sampleIndex*2+5], 0.5f);
-        glVertex3f(points2d[sampleIndex*2+6], points2d[sampleIndex*2+7], 0.5f);
+        for (int vertexIndex = 0; vertexIndex < 4; ++vertexIndex)
+        {
+            const int xVertexOffset= vertexIndex*2;
+            const int yVertexOffset= xVertexOffset+1;
+            const glm::vec3 vertex(
+                points2d[sampleOffset + xVertexOffset], 
+                points2d[sampleOffset + yVertexOffset], 
+                0.5f);
 
-        glVertex3f(points2d[sampleIndex*2+6], points2d[sampleIndex*2+7], 0.5f);
-        glVertex3f(points2d[sampleIndex*2+0], points2d[sampleIndex*2+1], 0.5f);
+            glm::vec3 remappedVertex=
+                remapPointIntoSubWindow(
+                    trackerWidth, trackerHeight,
+                    windowX0, windowY0,
+                    windowX1, windowY1,
+                    vertex);
+
+            prevRemappedVertex= remappedVertex;
+        }
     }
     glEnd();
 
@@ -994,7 +1043,25 @@ void drawQuadList2d(const float trackerWidth, const float trackerHeight, const g
     glPopMatrix();
 }
 
-void drawOpenCVChessBoard(const float trackerWidth, const float trackerHeight, const float *points2d, const int point_count, bool validPoints)
+void drawOpenCVChessBoard(
+    const float trackerWidth, const float trackerHeight, 
+    const float *points2d, const int point_count, 
+    bool validPoints)
+{
+    drawOpenCVChessBoardInSubWindow(
+        trackerWidth, trackerHeight, 
+        0, 0,
+        trackerWidth-1.f, trackerHeight-1.f,
+        points2d, point_count, 
+        validPoints);
+}
+
+void drawOpenCVChessBoardInSubWindow(
+    const float trackerWidth, const float trackerHeight, 
+    const float windowX0, const float windowY0,
+    const float windowX1, const float windowY1,
+    const float *points2d, const int point_count, 
+    bool validPoints)
 {
     assert(Renderer::getIsRenderingStage());
 
@@ -1031,7 +1098,13 @@ void drawOpenCVChessBoard(const float trackerWidth, const float trackerHeight, c
             glColor3f(1.f, 0.f, 0.f);
         }
 
-        glVertex3f(points2d[sampleIndex*2+0], points2d[sampleIndex*2+1], 0.5f);
+        glm::vec3 remappedPoint=
+            remapPointIntoSubWindow(
+                trackerWidth, trackerHeight,
+                windowX0, windowY0,
+                windowX1, windowY1,
+                glm::vec3(points2d[sampleIndex*2+0], points2d[sampleIndex*2+1], 0.5f));
+        glVertex3fv(glm::value_ptr(remappedPoint));
     }
     glEnd();
 
@@ -1064,8 +1137,14 @@ void drawOpenCVChessBoard(const float trackerWidth, const float trackerHeight, c
                 radius*cosf(angle) + points2d[sampleIndex*2+0],
                 radius*sinf(angle) + points2d[sampleIndex*2+1],
                 0.5f);
+            glm::vec3 remappedPoint=
+                remapPointIntoSubWindow(
+                    trackerWidth, trackerHeight,
+                    windowX0, windowY0,
+                    windowX1, windowY1,
+                    point);
 
-            glVertex3fv(glm::value_ptr(point));
+            glVertex3fv(glm::value_ptr(remappedPoint));
             angle += angleStep;
         }
         glEnd();

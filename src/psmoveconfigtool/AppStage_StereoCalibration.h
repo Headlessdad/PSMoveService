@@ -26,11 +26,7 @@ public:
     void request_tracker_stop_stream();
     void request_tracker_set_temp_gain(float gain);
     void request_tracker_set_temp_exposure(float exposure);
-    void request_tracker_set_intrinsic(
-        const PSMMatrix3d &left_camera_matrix, 
-        const PSMMatrix3d &right_camera_matrix,
-        const PSMDistortionCoefficients &left_distortion_coefficients,
-        const PSMDistortionCoefficients &right_distortion_coefficients);
+    void request_tracker_set_intrinsic(const PSMStereoTrackerIntrinsics &new_stereo_intrinsics);
     void request_tracker_reload_settings();
     void request_exit();
 
@@ -62,18 +58,8 @@ private:
         failedTrackerStopStreamRequest,
     };
 
-    enum eVideoDisplayMode
-    {
-        mode_bgr,
-        mode_grayscale,
-        mode_undistored,
-
-        MAX_VIDEO_DISPLAY_MODES
-    };
-
     // Menu state
     eMenuState m_menuState;
-    eVideoDisplayMode m_videoDisplayMode;
 
 	// Board Settings
 	float m_square_length_mm;
@@ -84,8 +70,7 @@ private:
 
     bool m_bStreamIsActive;
     PSMTracker *m_tracker_view;
-    class TextureAsset *m_video_texture[2];
-    class OpenCVBufferState *m_opencv_state[2];
+    class OpenCVStereoState *m_opencv_stereo_state;
 };
 
 #endif // APP_STAGE_DISTORTION_CALIBRATION_H
