@@ -140,7 +140,7 @@ cv::Matx33d psmove_matrix3x3_to_cv_mat33d(const PSMMatrix3d &in)
 
 // OpenCV types to PSMove types
 PSMMatrix3f 
-cv_mat33f_to_psmove_matrix3x3(const cv::Matx33f &in)
+cv_mat33f_to_psm_matrix3x3(const cv::Matx33f &in)
 {
     // Both OpenCV and PSMMatrix3f matrices are stored row-major
     PSMMatrix3f out;
@@ -156,7 +156,7 @@ cv_mat33f_to_psmove_matrix3x3(const cv::Matx33f &in)
 }
 
 PSMMatrix3d
-cv_mat33d_to_psmove_matrix3x3(const cv::Matx33d &in)
+cv_mat33d_to_psm_matrix3x3(const cv::Matx33d &in)
 {
     // Both OpenCV and PSMMatrix3f matrices are stored row-major
     PSMMatrix3d out;
@@ -171,8 +171,23 @@ cv_mat33d_to_psmove_matrix3x3(const cv::Matx33d &in)
     return out;
 }
 
+PSMMatrix4d cv_mat44d_to_psm_matrix4x4(const cv::Matx44d &in)
+{
+    // Both OpenCV and PSMMatrix4f matrices are stored row-major
+    PSMMatrix4d out;
+    for (int i = 0; i < 4; ++i)
+    {
+        for (int j = 0; j < 4; ++j)
+        {
+            out.m[i][j]= in(i, j);
+        }
+    }
+
+    return out;
+}
+
 PSMMatrix34d 
-cv_mat34d_to_psmove_matrix3x4(const cv::Matx34d &in)
+cv_mat34d_to_psm_matrix3x4(const cv::Matx34d &in)
 {
     // Both OpenCV and PSMMatrix3f matrices are stored row-major
     PSMMatrix34d out;
@@ -188,7 +203,7 @@ cv_mat34d_to_psmove_matrix3x4(const cv::Matx34d &in)
 }
 
 PSMVector3d 
-cv_vec3d_to_psmove_psm_vector3d(const cv::Vec3d &in)
+cv_vec3d_to_psm_vector3d(const cv::Vec3d &in)
 {
     return {in(0), in(1), in(2)};
 }

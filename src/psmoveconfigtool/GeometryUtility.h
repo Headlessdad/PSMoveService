@@ -39,10 +39,11 @@ cv::Matx33f psmove_matrix3x3_to_cv_mat33f(const PSMMatrix3d &in);
 cv::Matx33d psmove_matrix3x3_to_cv_mat33d(const PSMMatrix3d &in);
 
 // OpenCV types to PSMove types
-PSMMatrix3f cv_mat33f_to_psmove_matrix3x3(const cv::Matx33f &in);
-PSMMatrix3d cv_mat33d_to_psmove_matrix3x3(const cv::Matx33d &in);
-PSMMatrix34d cv_mat34d_to_psmove_matrix3x4(const cv::Matx34d &in);
-PSMVector3d cv_vec3d_to_psmove_psm_vector3d(const cv::Vec3d &in);
+PSMMatrix3f cv_mat33f_to_psm_matrix3x3(const cv::Matx33f &in);
+PSMMatrix3d cv_mat33d_to_psm_matrix3x3(const cv::Matx33d &in);
+PSMMatrix4d cv_mat44d_to_psm_matrix4x4(const cv::Matx44d &in);
+PSMMatrix34d cv_mat34d_to_psm_matrix3x4(const cv::Matx34d &in);
+PSMVector3d cv_vec3d_to_psm_vector3d(const cv::Vec3d &in);
 
 // PSMoveTypes to Eigen types
 Eigen::Vector3f psm_vector3i_to_eigen_vector3(const PSMVector3i &v);

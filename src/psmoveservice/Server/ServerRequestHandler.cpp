@@ -1736,6 +1736,16 @@ protected:
         result->set_m20(m[8]); result->set_m21(m[9]); result->set_m22(m[10]); result->set_m23(m[11]);
     }
 
+    inline void common_mat44_to_protocol_mat44(
+        const std::array<double, 16> &m,
+        PSMoveProtocol::DoubleMatrix44 *result)
+    {
+        result->set_m00(m[0]); result->set_m01(m[1]); result->set_m02(m[2]); result->set_m03(m[3]);
+        result->set_m10(m[4]); result->set_m11(m[5]); result->set_m12(m[6]); result->set_m13(m[7]);
+        result->set_m20(m[8]); result->set_m21(m[9]); result->set_m22(m[10]); result->set_m23(m[11]);
+        result->set_m30(m[12]); result->set_m31(m[13]); result->set_m32(m[14]); result->set_m33(m[15]);
+    }
+
     void handle_request__get_tracker_list(
         const RequestContext &context,
         PSMoveProtocol::Response *response)
@@ -1860,6 +1870,9 @@ protected:
                             common_mat33_to_protocol_mat33(
                                 src_intrinsics.fundamental_matrix, 
                                 dest_intrinsics->mutable_fundamental_matrix());
+                            common_mat44_to_protocol_mat44(
+                                src_intrinsics.reprojection_matrix,
+                                dest_intrinsics->mutable_reprojection_matrix());
                         } break;
                     default:
                         assert(0 && "Unhandled intrinsics type");
@@ -2453,9 +2466,19 @@ protected:
         const PSMoveProtocol::DoubleMatrix34 &m,
         std::array<double, 12> &result)
     {
-        result[0]= m.m00(); result[1]= m.m01(); result[2]= m.m02(); result[4]= m.m03();
-        result[5]= m.m10(); result[6]= m.m11(); result[7]= m.m12(); result[8]= m.m13();
-        result[9]= m.m20(); result[10]= m.m21(); result[11]= m.m22(); result[12]= m.m23();
+        result[0]= m.m00(); result[1]= m.m01(); result[2]= m.m02(); result[3]= m.m03();
+        result[4]= m.m10(); result[5]= m.m11(); result[6]= m.m12(); result[7]= m.m13();
+        result[8]= m.m20(); result[9]= m.m21(); result[10]= m.m22(); result[11]= m.m23();
+    }
+    
+    inline void protocol_mat44_to_common_mat44(
+        const PSMoveProtocol::DoubleMatrix44 &m,
+        std::array<double, 16> &result)
+    {
+        result[0]= m.m00(); result[1]= m.m01(); result[2]= m.m02(); result[3]= m.m03();
+        result[4]= m.m10(); result[5]= m.m11(); result[6]= m.m12(); result[7]= m.m13();
+        result[8]= m.m20(); result[9]= m.m21(); result[10]= m.m22(); result[11]= m.m23();
+        result[12]= m.m30(); result[13]= m.m31(); result[14]= m.m32(); result[15]= m.m33();
     }
 
     void handle_request__set_tracker_intrinsics(
@@ -2510,6 +2533,8 @@ protected:
                         src_stereo.essential_matrix(), dest_stereo.essential_matrix);
                     protocol_mat33_to_common_mat33(
                         src_stereo.fundamental_matrix(), dest_stereo.fundamental_matrix);
+                    protocol_mat44_to_common_mat44(
+                        src_stereo.reprojection_matrix(), dest_stereo.reprojection_matrix);
 
                     bValidIntrinsics= true;
                 }

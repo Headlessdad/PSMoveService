@@ -70,6 +70,14 @@ typedef struct
     double m[3][4]; 
 } PSMMatrix34d;
 
+/** A 4x4 matrix with double components
+	storage is row major order: [x0,x1,x2,x3,y0,y1,y2,y3,z0,z1,z2,z3,w0,w1,w2,w3]
+ */
+typedef struct
+{
+    double m[4][4]; 
+} PSMMatrix4d;
+
 /// A quaternion rotation.
 typedef struct
 {

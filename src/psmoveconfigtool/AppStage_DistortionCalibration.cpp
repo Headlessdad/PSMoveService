@@ -467,7 +467,7 @@ void AppStage_DistortionCalibration::update()
                     const cv::Matx33d cv_intrinsic_matrix= m_opencv_state->intrinsic_matrix;
                     const cv::Mat *cv_distortion_coeffs= m_opencv_state->distortion_coeffs;
 
-                    const PSMMatrix3d intrinsic_matrix= cv_mat33d_to_psmove_matrix3x3(cv_intrinsic_matrix);
+                    const PSMMatrix3d intrinsic_matrix= cv_mat33d_to_psm_matrix3x3(cv_intrinsic_matrix);
 
                     PSMDistortionCoefficients distortion_coeffs;
                     distortion_coeffs.k1= cv_distortion_coeffs->at<double>(0, 0);

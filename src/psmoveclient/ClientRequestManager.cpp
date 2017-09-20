@@ -314,6 +314,16 @@ public:
         result.m[2][0]= m.m20(); result.m[2][1]= m.m21(); result.m[2][2]= m.m22(); result.m[2][3]= m.m23();
     }
 
+    inline void protocol_mat4_to_psm_mat4d(
+        const PSMoveProtocol::DoubleMatrix44 &m,
+        PSMMatrix4d &result)
+    {
+        result.m[0][0]= m.m00(); result.m[0][1]= m.m01(); result.m[0][2]= m.m02(); result.m[0][3]= m.m03();
+        result.m[1][0]= m.m10(); result.m[1][1]= m.m11(); result.m[1][2]= m.m12(); result.m[1][3]= m.m13();
+        result.m[2][0]= m.m20(); result.m[2][1]= m.m21(); result.m[2][2]= m.m22(); result.m[2][3]= m.m23();
+        result.m[3][0]= m.m30(); result.m[3][1]= m.m31(); result.m[3][2]= m.m32(); result.m[3][3]= m.m33();
+    }
+
     void build_tracker_list_response_message(
         ResponsePtr response,
         PSMTrackerList *tracker_list)
@@ -402,6 +412,7 @@ public:
                 protocol_vec3_to_psm_vec3d(protocol_stereo_intrinsics.translation_between_cameras(), stereo_intrinsics.translation_between_cameras);
                 protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.essential_matrix(), stereo_intrinsics.essential_matrix);
                 protocol_mat33_to_psm_mat33d(protocol_stereo_intrinsics.fundamental_matrix(), stereo_intrinsics.fundamental_matrix);
+                protocol_mat4_to_psm_mat4d(protocol_stereo_intrinsics.reprojection_matrix(), stereo_intrinsics.reprojection_matrix);
 
                 TrackerInfo.tracker_intrinsics.intrinsics_type= PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS;
             }

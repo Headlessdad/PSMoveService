@@ -462,6 +462,7 @@ typedef struct
     PSMVector3d translation_between_cameras; ///< Translation between the left and right camera
     PSMMatrix3d essential_matrix; ///< Transform relating points in unit coordinate space between cameras
     PSMMatrix3d fundamental_matrix; ///< Transform relating points in pixel coordinates between cameras
+    PSMMatrix4d reprojection_matrix;  ///< Transform relating pixel x,y + disparity to distance from cameras
 } PSMStereoTrackerIntrinsics;
 
 /// Bundle containing all intrinsic camera properties

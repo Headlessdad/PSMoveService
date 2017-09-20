@@ -91,6 +91,11 @@ VirtualStereoTrackerConfig::VirtualStereoTrackerConfig(const std::string &fnameb
         1.0, 0.0, 0.0,
         0.0, 1.0, 0.0,
         0.0, 0.0, 1.0}};
+    tracker_intrinsics.reprojection_matrix= {{
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0}};
 
 	SharedColorPresets.table_name.clear();
     for (int preset_index = 0; preset_index < eCommonTrackingColorID::MAX_TRACKING_COLOR_TYPES; ++preset_index)
@@ -144,6 +149,7 @@ VirtualStereoTrackerConfig::config2ptree()
     writeArray(pt, "translation_between_cameras", tracker_intrinsics.translation_between_cameras);
     writeArray(pt, "essential_matrix", tracker_intrinsics.essential_matrix);
     writeArray(pt, "fundamental_matrix", tracker_intrinsics.fundamental_matrix);
+    writeArray(pt, "reprojection_matrix", tracker_intrinsics.reprojection_matrix);
 
 	writeColorPropertyPresetTable(&SharedColorPresets, pt);
 
@@ -197,6 +203,7 @@ VirtualStereoTrackerConfig::ptree2config(const boost::property_tree::ptree &pt)
         tracker_intrinsics.translation_between_cameras= readArray<double,3>(pt, "translation_between_cameras");
         tracker_intrinsics.essential_matrix= readArray<double,3*3>(pt, "essential_matrix");
         tracker_intrinsics.fundamental_matrix= readArray<double,3*3>(pt, "fundamental_matrix");
+        tracker_intrinsics.reprojection_matrix= readArray<double,4*4>(pt, "reprojection_matrix");
 
         pose.Orientation.w = pt.get<float>("pose.orientation.w", 1.0);
         pose.Orientation.x = pt.get<float>("pose.orientation.x", 0.0);

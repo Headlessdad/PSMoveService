@@ -460,6 +460,7 @@ struct CommonStereoTrackerIntrinsics
     std::array<double, 3> translation_between_cameras;
     std::array<double, 3*3> essential_matrix;
     std::array<double, 3*3> fundamental_matrix;
+    std::array<double, 4*4> reprojection_matrix;
 };
 
 struct CommonTrackerIntrinsics
