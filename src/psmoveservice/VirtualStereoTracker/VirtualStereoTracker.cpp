@@ -37,8 +37,8 @@ VirtualStereoTrackerConfig::VirtualStereoTrackerConfig(const std::string &fnameb
 	, frame_rate(40)
     , exposure(32)
     , gain(32)
-    , left_camera_usb_path("")
-    , right_camera_usb_path("")
+    , left_camera_usb_path("USB\\\\VID_1415&PID_2000\\\\bA_pB.C")
+    , right_camera_usb_path("USB\\\\VID_1415&PID_2000\\\\bX_pY.Z")
 {
     pose.clear();
 
@@ -113,7 +113,7 @@ VirtualStereoTrackerConfig::config2ptree()
     pt.put("version", VirtualStereoTrackerConfig::CONFIG_VERSION);
     pt.put("max_poll_failure_count", max_poll_failure_count);
 	pt.put("frame_width", tracker_intrinsics.pixel_width);
-	pt.put("frame_height", tracker_intrinsics.pixel_width);
+	pt.put("frame_height", tracker_intrinsics.pixel_height);
 	pt.put("frame_rate", frame_rate);
     pt.put("exposure", exposure);
 	pt.put("gain", gain);
@@ -618,14 +618,17 @@ const unsigned char *VirtualStereoTracker::getVideoFrameBuffer(ITrackerInterface
 {
     const unsigned char *result = nullptr;
 
-    switch (section)
+    if (getIsOpen())
     {
-    case ITrackerInterface::LeftSection:
-        result= LeftTracker->getVideoFrameBuffer(ITrackerInterface::PrimarySection);
-        break;
-    case ITrackerInterface::RightSection:
-        result= RightTracker->getVideoFrameBuffer(ITrackerInterface::PrimarySection);
-        break;
+        switch (section)
+        {
+        case ITrackerInterface::LeftSection:
+            result= LeftTracker->getVideoFrameBuffer(ITrackerInterface::PrimarySection);
+            break;
+        case ITrackerInterface::RightSection:
+            result= RightTracker->getVideoFrameBuffer(ITrackerInterface::PrimarySection);
+            break;
+        }
     }
 
     return result;
@@ -645,41 +648,44 @@ void VirtualStereoTracker::loadSettings()
 
     cfg.load();
 
-	if (leftFrameWidth != cfg.tracker_intrinsics.pixel_width)
-	{
-		LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
-	}
-	if (rightFrameWidth != cfg.tracker_intrinsics.pixel_width)
-	{
-		RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
-	}
+    if (getIsOpen())
+    {
+	    if (leftFrameWidth != cfg.tracker_intrinsics.pixel_width)
+	    {
+		    LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+	    }
+	    if (rightFrameWidth != cfg.tracker_intrinsics.pixel_width)
+	    {
+		    RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+	    }
 
-	if (leftFrameExposure != cfg.exposure)
-	{
-		LeftTracker->setExposure(cfg.exposure, false);
-	}
-	if (rightFrameExposure != cfg.exposure)
-	{
-		RightTracker->setExposure(cfg.exposure, false);
-	}
+	    if (leftFrameExposure != cfg.exposure)
+	    {
+		    LeftTracker->setExposure(cfg.exposure, false);
+	    }
+	    if (rightFrameExposure != cfg.exposure)
+	    {
+		    RightTracker->setExposure(cfg.exposure, false);
+	    }
 
-	if (leftFrameGain != cfg.gain)
-	{
-		LeftTracker->setGain(cfg.gain, false);
-	}
-	if (rightFrameGain != cfg.gain)
-	{
-		RightTracker->setGain(cfg.gain, false);
-	}
+	    if (leftFrameGain != cfg.gain)
+	    {
+		    LeftTracker->setGain(cfg.gain, false);
+	    }
+	    if (rightFrameGain != cfg.gain)
+	    {
+		    RightTracker->setGain(cfg.gain, false);
+	    }
 
-	if (leftFrameFPS != cfg.frame_rate)
-	{
-        LeftTracker->setFrameRate(cfg.frame_rate, false);
-	}
-	if (rightFrameFPS != cfg.frame_rate)
-	{
-        RightTracker->setFrameRate(cfg.frame_rate, false);
-	}
+	    if (leftFrameFPS != cfg.frame_rate)
+	    {
+            LeftTracker->setFrameRate(cfg.frame_rate, false);
+	    }
+	    if (rightFrameFPS != cfg.frame_rate)
+	    {
+            RightTracker->setFrameRate(cfg.frame_rate, false);
+	    }
+    }
 }
 
 void VirtualStereoTracker::saveSettings()
@@ -689,8 +695,11 @@ void VirtualStereoTracker::saveSettings()
 
 void VirtualStereoTracker::setFrameWidth(double value, bool bUpdateConfig)
 {
-	LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
-    RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+    if (getIsOpen())
+    {
+	    LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+        RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+    }
 
 	if (bUpdateConfig)
 	{
@@ -706,8 +715,11 @@ double VirtualStereoTracker::getFrameWidth() const
 
 void VirtualStereoTracker::setFrameHeight(double value, bool bUpdateConfig)
 {
-	LeftTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
-    RightTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
+    if (getIsOpen())
+    {
+	    LeftTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
+        RightTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
+    }
 
 	if (bUpdateConfig)
 	{
@@ -723,8 +735,11 @@ double VirtualStereoTracker::getFrameHeight() const
 
 void VirtualStereoTracker::setFrameRate(double value, bool bUpdateConfig)
 {
-    LeftTracker->setFrameRate(cfg.frame_rate, false);
-    RightTracker->setFrameRate(cfg.frame_rate, false);
+    if (getIsOpen())
+    {
+        LeftTracker->setFrameRate(cfg.frame_rate, false);
+        RightTracker->setFrameRate(cfg.frame_rate, false);
+    }
 
 	if (bUpdateConfig)
 	{
@@ -740,8 +755,11 @@ double VirtualStereoTracker::getFrameRate() const
 
 void VirtualStereoTracker::setExposure(double value, bool bUpdateConfig)
 {
-    LeftTracker->setExposure(cfg.exposure, false);
-    RightTracker->setFrameRate(cfg.exposure, false);
+    if (getIsOpen())
+    {
+        LeftTracker->setExposure(cfg.exposure, false);
+        RightTracker->setFrameRate(cfg.exposure, false);
+    }
 
 	if (bUpdateConfig)
 	{
@@ -757,8 +775,11 @@ double VirtualStereoTracker::getExposure() const
 
 void VirtualStereoTracker::setGain(double value, bool bUpdateConfig)
 {
-    LeftTracker->setGain(cfg.gain, false);
-    RightTracker->setGain(cfg.gain, false);
+    if (getIsOpen())
+    {
+        LeftTracker->setGain(cfg.gain, false);
+        RightTracker->setGain(cfg.gain, false);
+    }
 
 	if (bUpdateConfig)
 	{
@@ -769,7 +790,7 @@ void VirtualStereoTracker::setGain(double value, bool bUpdateConfig)
 double VirtualStereoTracker::getGain() const
 {
     //ASSUMPTION: Left and right trackers should have same video frame properties
-	return LeftTracker->getGain();
+	return cfg.gain;
 }
 
 void VirtualStereoTracker::getCameraIntrinsics(

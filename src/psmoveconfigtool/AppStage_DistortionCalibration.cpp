@@ -56,14 +56,32 @@ static const char *k_video_display_mode_names[] = {
 #define STRAIGHT_LINE_TOLERANCE 5 // error tolerance in pixels
 
 //-- private definitions -----
-class OpenCVBufferState
+class OpenCVMonoState
 {
 public:
-    OpenCVBufferState(const PSMClientTrackerInfo &_trackerInfo)
+    OpenCVMonoState(const PSMClientTrackerInfo &_trackerInfo)
         : trackerInfo(_trackerInfo)
         , frameWidth(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_width))
         , frameHeight(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_height))
+        // Video frame buffers
+        , bgrSourceBuffer(nullptr)
+        , gsBuffer(nullptr)
+        , gsBGRBuffer(nullptr)
+        , bgrUndistortBuffer(nullptr)
+        // Chess board computed state
         , capturedBoardCount(0)
+        , lastValidImagePoints()
+        , currentImagePoints()
+        , bCurrentImagePointsValid(false)
+        , quadList()
+        , imagePointsList()
+        // Calibration state
+        , reprojectionError(0.f)
+        , intrinsic_matrix()
+        , distortion_coeffs(nullptr)
+        // Distortion preview
+        , distortionMapX(nullptr)
+        , distortionMapY(nullptr)
     {
         // Video Frame data
         bgrSourceBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
@@ -78,11 +96,10 @@ public:
         distortionMapX = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
         distortionMapY = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
 
-        resetCaptureState();
         resetCalibrationState();
     }
 
-    virtual ~OpenCVBufferState()
+    virtual ~OpenCVMonoState()
     {
         // Video Frame data
         delete bgrSourceBuffer;
@@ -844,7 +861,7 @@ void AppStage_DistortionCalibration::handle_tracker_start_stream_response(
                     nullptr);
 
                 // Allocate an opencv buffer 
-                thisPtr->m_opencv_state = new OpenCVBufferState(trackerInfo);
+                thisPtr->m_opencv_state = new OpenCVMonoState(trackerInfo);
 
 				// Warn the user if they are about to change the distortion calibration settings for the PS3EYE
 				if (trackerInfo.tracker_type == PSMTrackerType::PSMTracker_PS3Eye)

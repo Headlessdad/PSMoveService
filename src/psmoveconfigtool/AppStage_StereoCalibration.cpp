@@ -25,6 +25,7 @@
 #include "opencv2/calib3d/calib3d.hpp"
 
 #include <vector>
+#include <array>
 
 #ifdef _MSC_VER
 #pragma warning (disable: 4996) // 'This function or variable may be unsafe': snprintf
@@ -71,15 +72,34 @@ namespace cv
 }
 
 //-- private definitions -----
-class OpenCVBufferState
+class OpenCVStereoSectionState
 {
 public:
-    OpenCVBufferState(const PSMClientTrackerInfo &_trackerInfo, PSMVideoFrameSection _section)
+    OpenCVStereoSectionState(const PSMClientTrackerInfo &_trackerInfo, PSMVideoFrameSection _section)
         : trackerInfo(_trackerInfo)
         , section(_section)
         , frameWidth(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_width))
         , frameHeight(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_height))
+        // Video frame buffers
+        , bgrSourceBuffer(nullptr)
+        , gsBuffer(nullptr)
+        , gsBGRBuffer(nullptr)
+        , bgrUndistortBuffer(nullptr)
+        // Chess board computed state
         , capturedBoardCount(0)
+        , lastValidImagePoints(0)
+        , currentImagePoints(0)
+        , bCurrentImagePointsValid(false)
+        , quadList(0)
+        , imagePointsList(0)
+        // Calibration state
+        , intrinsic_matrix()
+        , rectification_rotation()
+        , rectification_projection()
+        , distortion_coeffs()
+        // Distortion preview
+        , distortionMapX(nullptr)
+        , distortionMapY(nullptr)
     {
         // Video Frame data
         bgrSourceBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
@@ -91,11 +111,10 @@ public:
         distortionMapX = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
         distortionMapY = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
 
-        resetCaptureState();
         resetCalibrationState();
     }
 
-    virtual ~OpenCVBufferState()
+    virtual ~OpenCVStereoSectionState()
     {
         // Video Frame data
         delete bgrSourceBuffer;
@@ -423,9 +442,12 @@ public:
 
         // Allocate an opencv buffer 
         m_opencv_state[PSMVideoFrameSection_Left] = 
-            new OpenCVBufferState(trackerInfo, PSMVideoFrameSection_Left);
+            new OpenCVStereoSectionState(trackerInfo, PSMVideoFrameSection_Left);
+        m_opencv_state[PSMVideoFrameSection_Left]->resetCalibrationState();
+
         m_opencv_state[PSMVideoFrameSection_Right] = 
-            new OpenCVBufferState(trackerInfo, PSMVideoFrameSection_Right);
+            new OpenCVStereoSectionState(trackerInfo, PSMVideoFrameSection_Right);
+        m_opencv_state[PSMVideoFrameSection_Right]->resetCalibrationState();
     }
 
     void disposeVideoTextures()
@@ -792,8 +814,8 @@ public:
     cv::Matx33d fundamental_matrix;
     cv::Matx44d reprojection_matrix;
 
-    OpenCVBufferState *m_opencv_state[2];
-    TextureAsset *m_video_texture[2];
+    std::array<OpenCVStereoSectionState *, 2> m_opencv_state;
+    std::array<TextureAsset *, 2> m_video_texture;
 };
 
 //-- public methods -----
@@ -821,6 +843,8 @@ void AppStage_StereoCalibration::enter()
     assert(m_tracker_view == nullptr);
 	PSM_AllocateTrackerListener(trackerInfo->tracker_id, trackerInfo);
 	m_tracker_view = PSM_GetTracker(trackerInfo->tracker_id);
+
+    m_opencv_stereo_state = new OpenCVStereoState(*trackerInfo);
 
 	m_square_length_mm = DEFAULT_SQUARE_LEN_MM;
 

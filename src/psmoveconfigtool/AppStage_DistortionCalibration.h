@@ -83,7 +83,7 @@ private:
     bool m_bStreamIsActive;
     PSMTracker *m_tracker_view;
     class TextureAsset *m_video_texture;
-    class OpenCVBufferState *m_opencv_state;
+    class OpenCVMonoState *m_opencv_state;
 };
 
 #endif // APP_STAGE_DISTORTION_CALIBRATION_H

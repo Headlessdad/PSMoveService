@@ -15,7 +15,7 @@ TrackerDeviceEnumerator::TrackerDeviceEnumerator(
 	, enumerators(nullptr)
 	, enumerator_count(0)
 	, enumerator_index(0)
-    , camera_index(0)
+    , camera_index(-1)
 {
 	switch (_apiType)
 	{
@@ -41,6 +41,7 @@ TrackerDeviceEnumerator::TrackerDeviceEnumerator(
 
 	if (is_valid())
 	{
+        camera_index= 0;
 		m_deviceType= enumerators[enumerator_index]->get_device_type();
 	}
 	else
@@ -57,7 +58,7 @@ TrackerDeviceEnumerator::TrackerDeviceEnumerator(
 	, enumerators(nullptr)
 	, enumerator_count(0)
 	, enumerator_index(0)
-    , camera_index(0)
+    , camera_index(-1)
 {
 	switch (_apiType)
 	{
@@ -83,6 +84,7 @@ TrackerDeviceEnumerator::TrackerDeviceEnumerator(
 
 	if (is_valid())
 	{
+        camera_index= 0;
 		m_deviceType = enumerators[enumerator_index]->get_device_type();
 	}
 	else
@@ -263,6 +265,7 @@ bool TrackerDeviceEnumerator::next()
                 camera_index < 0) //###HipsterSloth $HACK - Don't use usb iterator if virtual stereo cameras are in use
                                   // This can be removed once we have a good way to filter out usb cameras already in use
 			{
+                camera_index= 0;
                 allocate_child_enumerator(enumerator_index);
 				foundValid = enumerators[enumerator_index]->is_valid();
 			}
