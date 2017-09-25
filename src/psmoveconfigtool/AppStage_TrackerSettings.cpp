@@ -289,6 +289,12 @@ void AppStage_TrackerSettings::renderUI()
                 {
                     if (ImGui::Button("Calibrate Stereo Tracker"))
                     {
+                        m_app->getAppStage<AppStage_StereoCalibration>()->setBypassCalibrationFlag(false);
+                        m_app->setAppStage(AppStage_StereoCalibration::APP_STAGE_NAME);
+                    }
+                    if (ImGui::Button("Test Stereo Calibration"))
+                    {
+                        m_app->getAppStage<AppStage_StereoCalibration>()->setBypassCalibrationFlag(true);
                         m_app->setAppStage(AppStage_StereoCalibration::APP_STAGE_NAME);
                     }
                 }

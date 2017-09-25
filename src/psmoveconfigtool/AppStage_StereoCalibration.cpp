@@ -24,8 +24,10 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/calib3d/calib3d.hpp"
 
-#include <vector>
 #include <array>
+#include <atomic>
+#include <thread>
+#include <vector>
 
 #ifdef _MSC_VER
 #pragma warning (disable: 4996) // 'This function or variable may be unsafe': snprintf
@@ -39,22 +41,24 @@ const char *AppStage_StereoCalibration::APP_STAGE_NAME = "StereoCalibration";
 enum eVideoDisplayMode
 {
     mode_bgr,
-    mode_grayscale,
     mode_undistored,
+    mode_grayscale,
+    mode_disparity,
 
     MAX_VIDEO_DISPLAY_MODES
 };
 
 static const char *k_video_display_mode_names[] = {
     "BGR",
+    "Undistorted",
     "Grayscale",
-    "Undistorted"
+    "Disparity"
 };
 
 #define PATTERN_W 9 // Internal corners
-#define PATTERN_H 6
+#define PATTERN_H 7
 #define CORNER_COUNT (PATTERN_W*PATTERN_H)
-#define DEFAULT_SQUARE_LEN_MM 24
+#define DEFAULT_SQUARE_LEN_MM 22
 #define DESIRED_CAPTURE_BOARD_COUNT 12
 
 #define BOARD_MOVED_PIXEL_DIST 5
@@ -63,7 +67,11 @@ static const char *k_video_display_mode_names[] = {
 #define BOARD_NEW_LOCATION_PIXEL_DIST 100 
 #define BOARD_NEW_LOCATION_ERROR_SUM BOARD_NEW_LOCATION_PIXEL_DIST*CORNER_COUNT
 
-#define STRAIGHT_LINE_TOLERANCE 5 // error tolerance in pixels
+#define STRAIGHT_LINE_TOLERANCE 10 // error tolerance in pixels
+
+// Stereo Block Matcher Constants
+#define NUM_DISPARITIES 128 // Range of disparity
+#define SAD_WINDOW_SIZE 41 // Size of the block window. Must be odd.
 
 //-- typedefs -----
 namespace cv
@@ -82,9 +90,10 @@ public:
         , frameHeight(static_cast<int>(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_height))
         // Video frame buffers
         , bgrSourceBuffer(nullptr)
-        , gsBuffer(nullptr)
-        , gsBGRBuffer(nullptr)
+        , gsSourceBuffer(nullptr)
+        , gsUndistortBuffer(nullptr)
         , bgrUndistortBuffer(nullptr)
+        , bgrGsUndistortBuffer(nullptr)
         // Chess board computed state
         , capturedBoardCount(0)
         , lastValidImagePoints(0)
@@ -103,9 +112,10 @@ public:
     {
         // Video Frame data
         bgrSourceBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
-        gsBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC1);
-        gsBGRBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
+        gsSourceBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC1);
+        gsUndistortBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC1);
         bgrUndistortBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
+        bgrGsUndistortBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
 
         // Distortion state
         distortionMapX = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
@@ -118,8 +128,9 @@ public:
     {
         // Video Frame data
         delete bgrSourceBuffer;
-        delete gsBuffer;
-        delete gsBGRBuffer;
+        delete gsSourceBuffer;
+        delete gsUndistortBuffer;
+        delete bgrGsUndistortBuffer;
         delete bgrUndistortBuffer;
 
         // Distortion state
@@ -140,21 +151,29 @@ public:
     void resetCalibrationState()
     {
         PSMMatrix3d psm_camera_matrix;
+        PSMMatrix3d psm_rectification_rotation;
+        PSMMatrix34d psm_rectification_projection;
         PSMDistortionCoefficients psm_distortion_coeffs;
 
         switch (section)
         {
         case PSMVideoFrameSection_Left:
             psm_camera_matrix= trackerInfo.tracker_intrinsics.intrinsics.stereo.left_camera_matrix;
+            psm_rectification_rotation= trackerInfo.tracker_intrinsics.intrinsics.stereo.left_rectification_rotation;
+            psm_rectification_projection= trackerInfo.tracker_intrinsics.intrinsics.stereo.left_rectification_projection;
             psm_distortion_coeffs= trackerInfo.tracker_intrinsics.intrinsics.stereo.left_distortion_coefficients;
             break;
         case PSMVideoFrameSection_Right:
             psm_camera_matrix= trackerInfo.tracker_intrinsics.intrinsics.stereo.right_camera_matrix;
+            psm_rectification_rotation= trackerInfo.tracker_intrinsics.intrinsics.stereo.right_rectification_rotation;
+            psm_rectification_projection= trackerInfo.tracker_intrinsics.intrinsics.stereo.right_rectification_projection;
             psm_distortion_coeffs= trackerInfo.tracker_intrinsics.intrinsics.stereo.right_distortion_coefficients;
             break;
         }
 
         intrinsic_matrix= psmove_matrix3x3_to_cv_mat33d(psm_camera_matrix);
+        rectification_rotation= psmove_matrix3x3_to_cv_mat33d(psm_rectification_rotation);
+        rectification_projection= psmove_matrix3x4_to_cv_mat34d(psm_rectification_projection);
         
         // Fill in the distortion coefficients
         distortion_coeffs(0, 0)= psm_distortion_coeffs.k1; 
@@ -175,14 +194,20 @@ public:
         videoBufferMat.copyTo(*bgrSourceBuffer);
 
         // Convert the video buffer to a grayscale image
-        cv::cvtColor(*bgrSourceBuffer, *gsBuffer, cv::COLOR_BGR2GRAY);
-        cv::cvtColor(*gsBuffer, *gsBGRBuffer, cv::COLOR_GRAY2BGR);
+        cv::cvtColor(*bgrSourceBuffer, *gsSourceBuffer, cv::COLOR_BGR2GRAY);
 
         // Apply the distortion map
         cv::remap(
             *bgrSourceBuffer, *bgrUndistortBuffer, 
             *distortionMapX, *distortionMapY, 
             cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+        cv::remap(
+            *gsSourceBuffer, *gsUndistortBuffer, 
+            *distortionMapX, *distortionMapY, 
+            cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+        // Convert the video buffer to a grayscale image
+        cv::cvtColor(*gsUndistortBuffer, *bgrGsUndistortBuffer, cv::COLOR_GRAY2BGR);
     }
 
     bool findAndAppendNewChessBoard(bool appWantsAppend)
@@ -191,13 +216,14 @@ public:
 
         if (capturedBoardCount < DESIRED_CAPTURE_BOARD_COUNT)
         {
-            std::vector<cv::Point2f> new_image_points;
+            // Clear out the previous images points
+            currentImagePoints.clear();
 
             // Find chessboard corners:
             if (cv::findChessboardCorners(
-                    *gsBuffer, 
+                    *gsSourceBuffer, 
                     cv::Size(PATTERN_W, PATTERN_H), 
-                    new_image_points, // output corners
+                    currentImagePoints, // output corners
                     cv::CALIB_CB_ADAPTIVE_THRESH 
                     + cv::CALIB_CB_FILTER_QUADS 
                     // + cv::CALIB_CB_NORMALIZE_IMAGE is suuuper slow
@@ -205,30 +231,30 @@ public:
             {
                 // Get subpixel accuracy on those corners
                 cv::cornerSubPix(
-                    *gsBuffer, 
-                    new_image_points, // corners to refine
+                    *gsSourceBuffer, 
+                    currentImagePoints, // corners to refine
                     cv::Size(11, 11), // winSize- Half of the side length of the search window
                     cv::Size(-1, -1), // zeroZone- (-1,-1) means no dead zone in search
                     cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.1));
 
                 // Append the new chessboard corner pixels into the image_points matrix
                 // Append the corresponding 3d chessboard corners into the object_points matrix
-                if (new_image_points.size() == CORNER_COUNT) 
+                if (currentImagePoints.size() == CORNER_COUNT) 
                 {
                     bCurrentImagePointsValid= false;
-                    // See if the board is stationary (didn't move much since last frame)
-                    if (currentImagePoints.size() > 0)
+
+                    if (lastValidImagePoints.size() > 0)
                     {
                         float error_sum= 0.f;
 
                         for (int corner_index= 0; corner_index < CORNER_COUNT; ++corner_index)
                         {
-                            float squared_error= static_cast<float>(cv::norm(new_image_points[corner_index] - currentImagePoints[corner_index]));
+                            float squared_error= static_cast<float>(cv::norm(currentImagePoints[corner_index] - lastValidImagePoints[corner_index]));
 
                             error_sum+= squared_error;
                         }
 
-                        bCurrentImagePointsValid= error_sum <= BOARD_MOVED_ERROR_SUM;
+                        bCurrentImagePointsValid= error_sum >= BOARD_NEW_LOCATION_ERROR_SUM;
                     }
                     else
                     {
@@ -236,40 +262,18 @@ public:
                         bCurrentImagePointsValid= true;
                     }
 
-                    // See if the board moved far enough from the last valid location
-                    if (bCurrentImagePointsValid)
-                    {
-                        if (lastValidImagePoints.size() > 0)
-                        {
-                            float error_sum= 0.f;
-
-                            for (int corner_index= 0; corner_index < CORNER_COUNT; ++corner_index)
-                            {
-                                float squared_error= static_cast<float>(cv::norm(new_image_points[corner_index] - lastValidImagePoints[corner_index]));
-
-                                error_sum+= squared_error;
-                            }
-
-                            bCurrentImagePointsValid= error_sum >= BOARD_NEW_LOCATION_ERROR_SUM;
-                        }
-                    }
-
-                    if (bCurrentImagePointsValid)
-                    {
-                        bCurrentImagePointsValid= areGridLinesStraight(new_image_points);
-                    }
 
                     // If it's a valid new location, append it to the board list
                     if (bCurrentImagePointsValid && appWantsAppend)
                     {
                         // Keep track of the corners of all of the chessboards we sample
-                        quadList.push_back(new_image_points[0]);
-                        quadList.push_back(new_image_points[PATTERN_W - 1]);
-                        quadList.push_back(new_image_points[CORNER_COUNT-1]);
-                        quadList.push_back(new_image_points[CORNER_COUNT-PATTERN_W]);                        
+                        quadList.push_back(currentImagePoints[0]);
+                        quadList.push_back(currentImagePoints[PATTERN_W - 1]);
+                        quadList.push_back(currentImagePoints[CORNER_COUNT-1]);
+                        quadList.push_back(currentImagePoints[CORNER_COUNT-PATTERN_W]);                        
 
                         // Append the new images points and object points
-                        imagePointsList.push_back(new_image_points);
+                        imagePointsList.push_back(currentImagePoints);
 
                         // Remember the last valid captured points
                         lastValidImagePoints= currentImagePoints;
@@ -279,9 +283,6 @@ public:
 
                         bAppendNewChessBoard= true;
                     }
-
-                    // Remember the last set of valid corners
-                    currentImagePoints= new_image_points;
                 }
             }
         }
@@ -361,8 +362,9 @@ public:
 
     // Video frame buffers
     cv::Mat *bgrSourceBuffer;
-    cv::Mat *gsBuffer;
-    cv::Mat *gsBGRBuffer;
+    cv::Mat *gsSourceBuffer;
+    cv::Mat *gsUndistortBuffer;
+    cv::Mat *bgrGsUndistortBuffer;
     cv::Mat *bgrUndistortBuffer;
 
     // Chess board computed state
@@ -392,32 +394,64 @@ public:
         , trackerInfo(_trackerInfo)
         , frameWidth(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_width)
         , frameHeight(_trackerInfo.tracker_intrinsics.intrinsics.mono.pixel_height)
+        , reprojectionError(0.0)
+        , rotation_between_cameras()
+        , translation_between_cameras()
+        , essential_matrix()
+        , fundamental_matrix()
+        , reprojection_matrix()
+        , valid_new_calibration(false)
+        , async_compute_task(nullptr)
+        , async_task_completed({false})
+        , m_raw_disparity_buffer(nullptr)
+        , m_norm_disparity_buffer(nullptr)
+        , m_bgr_disparity_buffer(nullptr)
+        , m_stereo_block_matcher()
     {
-        m_opencv_state[PSMVideoFrameSection_Left]= nullptr;
-        m_opencv_state[PSMVideoFrameSection_Right]= nullptr;
+        memset(&async_task_result, 0, sizeof(PSMStereoTrackerIntrinsics));
+
+        m_opencv_section_state[PSMVideoFrameSection_Left]= nullptr;
+        m_opencv_section_state[PSMVideoFrameSection_Right]= nullptr;
         m_video_texture[PSMVideoFrameSection_Left]= nullptr;
         m_video_texture[PSMVideoFrameSection_Right]= nullptr;
-        reprojectionError= 0.f;
     }
 
     virtual ~OpenCVStereoState()
     {
-        if (m_opencv_state[PSMVideoFrameSection_Left] != nullptr)
+        if (m_opencv_section_state[PSMVideoFrameSection_Left] != nullptr)
         {
-            delete m_opencv_state[PSMVideoFrameSection_Left];
-            m_opencv_state[PSMVideoFrameSection_Left]= nullptr;
+            delete m_opencv_section_state[PSMVideoFrameSection_Left];
+            m_opencv_section_state[PSMVideoFrameSection_Left]= nullptr;
         }
 
-        if (m_opencv_state[PSMVideoFrameSection_Right] != nullptr)
+        if (m_opencv_section_state[PSMVideoFrameSection_Right] != nullptr)
         {
-            delete m_opencv_state[PSMVideoFrameSection_Right];
-            m_opencv_state[PSMVideoFrameSection_Right]= nullptr;
+            delete m_opencv_section_state[PSMVideoFrameSection_Right];
+            m_opencv_section_state[PSMVideoFrameSection_Right]= nullptr;
+        }
+
+        if (m_raw_disparity_buffer != nullptr)
+        {
+            delete m_raw_disparity_buffer;
+            m_raw_disparity_buffer= nullptr;
+        }
+
+        if (m_norm_disparity_buffer != nullptr)
+        {
+            delete m_norm_disparity_buffer;
+            m_norm_disparity_buffer= nullptr;
+        }
+
+        if (m_bgr_disparity_buffer != nullptr)
+        {
+            delete m_bgr_disparity_buffer;
+            m_bgr_disparity_buffer= nullptr;
         }
 
         disposeVideoTextures();
     }
 
-    void allocateVideoTextures()
+    void allocateVideoTextures(bool bypassCalibrationFlag)
     {
         const PSMStereoTrackerIntrinsics &trackerIntrinsics= trackerInfo.tracker_intrinsics.intrinsics.stereo;
 
@@ -440,14 +474,25 @@ public:
             GL_BGR, // buffer format
             nullptr);
 
-        // Allocate an opencv buffer 
-        m_opencv_state[PSMVideoFrameSection_Left] = 
+        // Allocate opencv buffer state
+        m_opencv_section_state[PSMVideoFrameSection_Left] = 
             new OpenCVStereoSectionState(trackerInfo, PSMVideoFrameSection_Left);
-        m_opencv_state[PSMVideoFrameSection_Left]->resetCalibrationState();
-
-        m_opencv_state[PSMVideoFrameSection_Right] = 
+        m_opencv_section_state[PSMVideoFrameSection_Right] = 
             new OpenCVStereoSectionState(trackerInfo, PSMVideoFrameSection_Right);
-        m_opencv_state[PSMVideoFrameSection_Right]->resetCalibrationState();
+
+        // Copy the current calibration state saved for this tracker
+        resetCalibrationState();
+
+        // Say we have a valid calibration if we want to bypass the calibration stage
+        valid_new_calibration= bypassCalibrationFlag;
+
+        int iFrameWidth= static_cast<int>(frameWidth);
+        int iFrameHeight= static_cast<int>(frameHeight);
+        m_raw_disparity_buffer = new cv::Mat(cv::Size(iFrameWidth, iFrameHeight), CV_32FC1);
+        m_norm_disparity_buffer = new cv::Mat(cv::Size(iFrameWidth, iFrameHeight), CV_8UC1);
+        m_bgr_disparity_buffer = new cv::Mat(cv::Size(iFrameWidth, iFrameHeight), CV_8UC3);
+
+        m_stereo_block_matcher = cv::StereoBM::create(NUM_DISPARITIES, SAD_WINDOW_SIZE);
     }
 
     void disposeVideoTextures()
@@ -470,24 +515,50 @@ public:
         const unsigned char *left_video_frame_buffer, 
         const unsigned char *right_video_frame_buffer)
     {
-        m_opencv_state[PSMVideoFrameSection_Left]->applyVideoFrame(left_video_frame_buffer);
-        m_opencv_state[PSMVideoFrameSection_Right]->applyVideoFrame(right_video_frame_buffer);
+        // Compute the undistorted 
+        m_opencv_section_state[PSMVideoFrameSection_Left]->applyVideoFrame(left_video_frame_buffer);
+        m_opencv_section_state[PSMVideoFrameSection_Right]->applyVideoFrame(right_video_frame_buffer);
+
+        if (valid_new_calibration)
+        {
+            // Calculate the disparity image
+            m_stereo_block_matcher->compute(
+                *m_opencv_section_state[PSMVideoFrameSection_Left]->gsUndistortBuffer,
+                *m_opencv_section_state[PSMVideoFrameSection_Right]->gsUndistortBuffer,
+                *m_raw_disparity_buffer);
+
+            // Find the min and max values in the disparity buffer
+            double minVal; double maxVal;
+            cv::minMaxLoc(*m_raw_disparity_buffer, &minVal, &maxVal);
+
+            if (maxVal > minVal)
+            {
+                // Convert the raw disparity values to a gray scale value
+                m_raw_disparity_buffer->convertTo(*m_norm_disparity_buffer, CV_8UC1, 255/(maxVal - minVal));
+
+                // Convert the gray scale buffer to an BGR buffer for display
+                cv::cvtColor(*m_norm_disparity_buffer, *m_bgr_disparity_buffer, cv::COLOR_GRAY2BGR);
+            }
+        }
 
 		// Update the video frame display texture
 		switch (m_videoDisplayMode)
 		{
 		case mode_bgr:
-			m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Left]->bgrSourceBuffer->data);
-            m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Right]->bgrSourceBuffer->data);
-			break;
-		case mode_grayscale:
-			m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Left]->gsBGRBuffer->data);
-            m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Right]->gsBGRBuffer->data);
+			m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_section_state[PSMVideoFrameSection_Left]->bgrSourceBuffer->data);
+            m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_section_state[PSMVideoFrameSection_Right]->bgrSourceBuffer->data);
 			break;
 		case mode_undistored:
-			m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Left]->bgrUndistortBuffer->data);
-            m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_state[PSMVideoFrameSection_Right]->bgrUndistortBuffer->data);
+			m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_section_state[PSMVideoFrameSection_Left]->bgrUndistortBuffer->data);
+            m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_section_state[PSMVideoFrameSection_Right]->bgrUndistortBuffer->data);
 			break;
+        case mode_grayscale:
+			m_video_texture[PSMVideoFrameSection_Left]->copyBufferIntoTexture(m_opencv_section_state[PSMVideoFrameSection_Left]->bgrGsUndistortBuffer->data);
+            m_video_texture[PSMVideoFrameSection_Right]->copyBufferIntoTexture(m_opencv_section_state[PSMVideoFrameSection_Right]->bgrGsUndistortBuffer->data);
+			break;
+        case mode_disparity:
+			m_video_texture[PSMVideoFrameSection_Primary]->copyBufferIntoTexture(m_bgr_disparity_buffer->data);
+            break;
 		default:
 			assert(0 && "unreachable");
 			break;
@@ -499,18 +570,18 @@ public:
         ImGuiIO io_state = ImGui::GetIO();
         const bool bWantsAppend= io_state.KeysDown[32];
 
-        bool bLeftAppend= m_opencv_state[PSMVideoFrameSection_Left]->findAndAppendNewChessBoard(bWantsAppend);
-        bool bRightAppend= m_opencv_state[PSMVideoFrameSection_Right]->findAndAppendNewChessBoard(bWantsAppend);
+        bool bLeftAppend= m_opencv_section_state[PSMVideoFrameSection_Left]->findAndAppendNewChessBoard(bWantsAppend);
+        bool bRightAppend= m_opencv_section_state[PSMVideoFrameSection_Right]->findAndAppendNewChessBoard(bWantsAppend);
 
         if (bWantsAppend)
         {
             if (bLeftAppend && !bRightAppend)
             {
-                m_opencv_state[PSMVideoFrameSection_Left]->popLastChessBoard();
+                m_opencv_section_state[PSMVideoFrameSection_Left]->popLastChessBoard();
             }
             if (!bLeftAppend && bRightAppend)
             {
-                m_opencv_state[PSMVideoFrameSection_Right]->popLastChessBoard();
+                m_opencv_section_state[PSMVideoFrameSection_Right]->popLastChessBoard();
             }
         }
     }
@@ -518,33 +589,49 @@ public:
     bool hasSampledAllChessBoards() const
     {
         return
-            m_opencv_state[PSMVideoFrameSection_Left]->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT &&
-            m_opencv_state[PSMVideoFrameSection_Right]->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT;
+            m_opencv_section_state[PSMVideoFrameSection_Left]->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT &&
+            m_opencv_section_state[PSMVideoFrameSection_Right]->capturedBoardCount >= DESIRED_CAPTURE_BOARD_COUNT;
     }
 
     bool areCurrentImagePointsValid() const
     {
         return 
-            m_opencv_state[PSMVideoFrameSection_Left]->bCurrentImagePointsValid &&
-            m_opencv_state[PSMVideoFrameSection_Right]->bCurrentImagePointsValid;
+            m_opencv_section_state[PSMVideoFrameSection_Left]->bCurrentImagePointsValid &&
+            m_opencv_section_state[PSMVideoFrameSection_Right]->bCurrentImagePointsValid;
     }
 
     float computeCalibrationProgress() const 
     {
         const float leftSamplePercentage= 
-            static_cast<float>(m_opencv_state[PSMVideoFrameSection_Left]->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
+            static_cast<float>(m_opencv_section_state[PSMVideoFrameSection_Left]->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
         const float rightSamplePercentage= 
-            static_cast<float>(m_opencv_state[PSMVideoFrameSection_Right]->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
+            static_cast<float>(m_opencv_section_state[PSMVideoFrameSection_Right]->capturedBoardCount) / static_cast<float>(DESIRED_CAPTURE_BOARD_COUNT);
 
         return std::min(leftSamplePercentage, rightSamplePercentage);
     }
 
-    void resetCalibration()
+    void resetCalibrationState()
     {
-        m_opencv_state[PSMVideoFrameSection_Left]->resetCaptureState();
-        m_opencv_state[PSMVideoFrameSection_Right]->resetCaptureState();
-        m_opencv_state[PSMVideoFrameSection_Left]->resetCalibrationState();
-        m_opencv_state[PSMVideoFrameSection_Right]->resetCalibrationState();
+        const PSMStereoTrackerIntrinsics &stereo_intrinsics= trackerInfo.tracker_intrinsics.intrinsics.stereo;
+
+        m_opencv_section_state[PSMVideoFrameSection_Left]->resetCalibrationState();
+        m_opencv_section_state[PSMVideoFrameSection_Right]->resetCalibrationState();
+
+        reprojectionError= 0.f;
+        rotation_between_cameras = psmove_matrix3x3_to_cv_mat33d(stereo_intrinsics.rotation_between_cameras);
+        translation_between_cameras = psmove_vector3d_to_cv_vec3d(stereo_intrinsics.translation_between_cameras);
+        essential_matrix = psmove_matrix3x3_to_cv_mat33d(stereo_intrinsics.essential_matrix);
+        fundamental_matrix = psmove_matrix3x3_to_cv_mat33d(stereo_intrinsics.fundamental_matrix);
+        reprojection_matrix = psmove_matrix4x4_to_cv_mat44d(stereo_intrinsics.reprojection_matrix);
+        valid_new_calibration= false;
+    }
+
+    void resetCaptureAndCalibration()
+    {
+        resetCalibrationState();
+
+        m_opencv_section_state[PSMVideoFrameSection_Left]->resetCaptureState();
+        m_opencv_section_state[PSMVideoFrameSection_Right]->resetCaptureState();
 
         m_videoDisplayMode= mode_bgr;
     }
@@ -575,27 +662,56 @@ public:
     }
 
     void computeCameraCalibration(
-        const float square_length_mm, 
-        PSMStereoTrackerIntrinsics &out_stereo_intrinsics)
+        const float square_length_mm)
+    {
+        assert(async_compute_task == nullptr);
+
+        async_task_completed= false;
+        async_compute_task = new std::thread([this, square_length_mm] { 
+            this->computeCameraCalibrationTask(square_length_mm); 
+        });
+    }
+
+    bool getCameraCalibration(PSMStereoTrackerIntrinsics &out_stereo_intrinsics)
+    {
+        bool bFetchSuccess= false;
+
+        if (async_task_completed.load())
+        {
+            async_compute_task->join();
+
+            delete async_compute_task;
+            async_compute_task= nullptr;
+
+            out_stereo_intrinsics= async_task_result;
+            valid_new_calibration= true;
+            bFetchSuccess= true;
+        }
+
+        return bFetchSuccess;
+    }
+
+    void computeCameraCalibrationTask(
+        const float square_length_mm)
     {
         // Copy over the pre-existing tracker intrinsics
-        out_stereo_intrinsics= trackerInfo.tracker_intrinsics.intrinsics.stereo;
+        async_task_result= trackerInfo.tracker_intrinsics.intrinsics.stereo;
 
         // Only need to calculate objectPointsList once,
         // then resize for each set of image points.
         std::vector<std::vector<cv::Point3f> > objectPointsList(1);
         calcBoardCornerPositions(square_length_mm, objectPointsList[0]);
-        objectPointsList.resize(m_opencv_state[PSMVideoFrameSection_Left]->imagePointsList.size(), objectPointsList[0]);
+        objectPointsList.resize(m_opencv_section_state[PSMVideoFrameSection_Left]->imagePointsList.size(), objectPointsList[0]);
             
         // Compute the stereo camera calibration using epipolar geometry
         cv::stereoCalibrate(
             objectPointsList, 
-            m_opencv_state[PSMVideoFrameSection_Left]->imagePointsList,
-            m_opencv_state[PSMVideoFrameSection_Right]->imagePointsList,
-            m_opencv_state[PSMVideoFrameSection_Left]->intrinsic_matrix,
-            m_opencv_state[PSMVideoFrameSection_Left]->distortion_coeffs,
-            m_opencv_state[PSMVideoFrameSection_Right]->intrinsic_matrix,
-            m_opencv_state[PSMVideoFrameSection_Right]->distortion_coeffs,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->imagePointsList,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->imagePointsList,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->intrinsic_matrix,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->distortion_coeffs,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->intrinsic_matrix,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->distortion_coeffs,
             cv::Size(static_cast<int>(frameWidth), static_cast<int>(frameHeight)), 
             rotation_between_cameras,
             translation_between_cameras,
@@ -609,44 +725,47 @@ public:
 
         // Compute the stereo rotation and projection rectification transforms
         cv::stereoRectify(
-            m_opencv_state[PSMVideoFrameSection_Left]->intrinsic_matrix,
-            m_opencv_state[PSMVideoFrameSection_Left]->distortion_coeffs,
-            m_opencv_state[PSMVideoFrameSection_Right]->intrinsic_matrix,
-            m_opencv_state[PSMVideoFrameSection_Right]->distortion_coeffs,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->intrinsic_matrix,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->distortion_coeffs,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->intrinsic_matrix,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->distortion_coeffs,
             cv::Size(static_cast<int>(frameWidth), static_cast<int>(frameHeight)),
             rotation_between_cameras, translation_between_cameras,
-            m_opencv_state[PSMVideoFrameSection_Left]->rectification_rotation,
-            m_opencv_state[PSMVideoFrameSection_Right]->rectification_rotation,
-            m_opencv_state[PSMVideoFrameSection_Left]->rectification_projection,
-            m_opencv_state[PSMVideoFrameSection_Right]->rectification_projection,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->rectification_rotation,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->rectification_rotation,
+            m_opencv_section_state[PSMVideoFrameSection_Left]->rectification_projection,
+            m_opencv_section_state[PSMVideoFrameSection_Right]->rectification_projection,
             reprojection_matrix);
 
         // Recompute the distortion mapping (for debug display only)
-        m_opencv_state[PSMVideoFrameSection_Left]->rebuildDistortionMap();
-        m_opencv_state[PSMVideoFrameSection_Right]->rebuildDistortionMap();
+        m_opencv_section_state[PSMVideoFrameSection_Left]->rebuildDistortionMap();
+        m_opencv_section_state[PSMVideoFrameSection_Right]->rebuildDistortionMap();
 
         // Pack the calibration results into the output stereo intrinsics structure
-        out_stereo_intrinsics.left_camera_matrix= 
-            cv_mat33d_to_psm_matrix3x3(m_opencv_state[PSMVideoFrameSection_Left]->intrinsic_matrix);
-        out_stereo_intrinsics.right_camera_matrix= 
-            cv_mat33d_to_psm_matrix3x3(m_opencv_state[PSMVideoFrameSection_Right]->intrinsic_matrix);
-        out_stereo_intrinsics.left_distortion_coefficients= 
-            cv_vec5_to_psm_distortion(m_opencv_state[PSMVideoFrameSection_Left]->distortion_coeffs);
-        out_stereo_intrinsics.right_distortion_coefficients= 
-            cv_vec5_to_psm_distortion(m_opencv_state[PSMVideoFrameSection_Right]->distortion_coeffs);
-        out_stereo_intrinsics.left_rectification_rotation=
-            cv_mat33d_to_psm_matrix3x3(m_opencv_state[PSMVideoFrameSection_Left]->rectification_rotation);
-        out_stereo_intrinsics.right_rectification_rotation=
-            cv_mat33d_to_psm_matrix3x3(m_opencv_state[PSMVideoFrameSection_Right]->rectification_rotation);
-        out_stereo_intrinsics.left_rectification_projection= 
-            cv_mat34d_to_psm_matrix3x4(m_opencv_state[PSMVideoFrameSection_Left]->rectification_projection);
-        out_stereo_intrinsics.right_rectification_projection=
-            cv_mat34d_to_psm_matrix3x4(m_opencv_state[PSMVideoFrameSection_Right]->rectification_projection);
-        out_stereo_intrinsics.rotation_between_cameras= cv_mat33d_to_psm_matrix3x3(rotation_between_cameras);
-        out_stereo_intrinsics.translation_between_cameras= cv_vec3d_to_psm_vector3d(translation_between_cameras);
-        out_stereo_intrinsics.essential_matrix= cv_mat33d_to_psm_matrix3x3(essential_matrix);
-        out_stereo_intrinsics.fundamental_matrix= cv_mat33d_to_psm_matrix3x3(fundamental_matrix);
-        out_stereo_intrinsics.reprojection_matrix= cv_mat44d_to_psm_matrix4x4(reprojection_matrix);
+        async_task_result.left_camera_matrix= 
+            cv_mat33d_to_psm_matrix3x3(m_opencv_section_state[PSMVideoFrameSection_Left]->intrinsic_matrix);
+        async_task_result.right_camera_matrix= 
+            cv_mat33d_to_psm_matrix3x3(m_opencv_section_state[PSMVideoFrameSection_Right]->intrinsic_matrix);
+        async_task_result.left_distortion_coefficients= 
+            cv_vec5_to_psm_distortion(m_opencv_section_state[PSMVideoFrameSection_Left]->distortion_coeffs);
+        async_task_result.right_distortion_coefficients= 
+            cv_vec5_to_psm_distortion(m_opencv_section_state[PSMVideoFrameSection_Right]->distortion_coeffs);
+        async_task_result.left_rectification_rotation=
+            cv_mat33d_to_psm_matrix3x3(m_opencv_section_state[PSMVideoFrameSection_Left]->rectification_rotation);
+        async_task_result.right_rectification_rotation=
+            cv_mat33d_to_psm_matrix3x3(m_opencv_section_state[PSMVideoFrameSection_Right]->rectification_rotation);
+        async_task_result.left_rectification_projection= 
+            cv_mat34d_to_psm_matrix3x4(m_opencv_section_state[PSMVideoFrameSection_Left]->rectification_projection);
+        async_task_result.right_rectification_projection=
+            cv_mat34d_to_psm_matrix3x4(m_opencv_section_state[PSMVideoFrameSection_Right]->rectification_projection);
+        async_task_result.rotation_between_cameras= cv_mat33d_to_psm_matrix3x3(rotation_between_cameras);
+        async_task_result.translation_between_cameras= cv_vec3d_to_psm_vector3d(translation_between_cameras);
+        async_task_result.essential_matrix= cv_mat33d_to_psm_matrix3x3(essential_matrix);
+        async_task_result.fundamental_matrix= cv_mat33d_to_psm_matrix3x3(fundamental_matrix);
+        async_task_result.reprojection_matrix= cv_mat44d_to_psm_matrix4x4(reprojection_matrix);
+
+        // Signal the main thread that the task is complete
+        async_task_completed= true;
     }
 
     double computeStereoCalibrationError()
@@ -654,26 +773,26 @@ public:
         double totalError= 0.0;
         double errSampleCount= 0.0;
 
-        assert(m_opencv_state[PSMVideoFrameSection_Left]->imagePointsList.size() == DESIRED_CAPTURE_BOARD_COUNT);
-        assert(m_opencv_state[PSMVideoFrameSection_Right]->imagePointsList.size() == DESIRED_CAPTURE_BOARD_COUNT);
+        assert(m_opencv_section_state[PSMVideoFrameSection_Left]->imagePointsList.size() == DESIRED_CAPTURE_BOARD_COUNT);
+        assert(m_opencv_section_state[PSMVideoFrameSection_Right]->imagePointsList.size() == DESIRED_CAPTURE_BOARD_COUNT);
 
         for (int boardSampleIndex = 0; boardSampleIndex < DESIRED_CAPTURE_BOARD_COUNT; ++boardSampleIndex)
         {
             const std::vector<cv::Point2f> &leftImagePoints=
-                m_opencv_state[PSMVideoFrameSection_Left]->imagePointsList[boardSampleIndex];
+                m_opencv_section_state[PSMVideoFrameSection_Left]->imagePointsList[boardSampleIndex];
             const std::vector<cv::Point2f> &rightImagePoints=
-                m_opencv_state[PSMVideoFrameSection_Right]->imagePointsList[boardSampleIndex];
+                m_opencv_section_state[PSMVideoFrameSection_Right]->imagePointsList[boardSampleIndex];
             
             std::vector<cv::Point2f> undistortedLeftImagePoints;
             std::vector<cv::Point2f> undistortedRightImagePoints;
             cv::undistortPoints(
                 leftImagePoints, undistortedLeftImagePoints,
-                m_opencv_state[PSMVideoFrameSection_Left]->intrinsic_matrix,
-                m_opencv_state[PSMVideoFrameSection_Left]->distortion_coeffs);
+                m_opencv_section_state[PSMVideoFrameSection_Left]->intrinsic_matrix,
+                m_opencv_section_state[PSMVideoFrameSection_Left]->distortion_coeffs);
             cv::undistortPoints(
                 rightImagePoints, undistortedRightImagePoints,
-                m_opencv_state[PSMVideoFrameSection_Right]->intrinsic_matrix,
-                m_opencv_state[PSMVideoFrameSection_Right]->distortion_coeffs);
+                m_opencv_section_state[PSMVideoFrameSection_Right]->intrinsic_matrix,
+                m_opencv_section_state[PSMVideoFrameSection_Right]->distortion_coeffs);
 
             std::vector<cv::Vec3f> leftLines;
             std::vector<cv::Vec3f> rightLines;
@@ -705,16 +824,34 @@ public:
         return (errSampleCount > 0.0) ? totalError / errSampleCount : 0.0;
     }
 
-    void renderStereoVideoBuffers()
+    void renderSelectedVideoBuffers()
     {
-        assert(m_video_texture[PSMVideoFrameSection_Left] != nullptr);
-        assert(m_video_texture[PSMVideoFrameSection_Right] != nullptr);
-        unsigned int left_texture_id = m_video_texture[PSMVideoFrameSection_Left]->texture_id;
-        unsigned int right_texture_id = m_video_texture[PSMVideoFrameSection_Right]->texture_id;
-
-        if (left_texture_id != 0 && right_texture_id != 0)
+        switch (m_videoDisplayMode)
         {
-            drawFullscreenStereoTexture(left_texture_id, right_texture_id);
+        case mode_bgr:
+        case mode_undistored:
+        case mode_grayscale:
+            {
+                assert(m_video_texture[PSMVideoFrameSection_Left] != nullptr);
+                assert(m_video_texture[PSMVideoFrameSection_Right] != nullptr);
+                unsigned int left_texture_id = m_video_texture[PSMVideoFrameSection_Left]->texture_id;
+                unsigned int right_texture_id = m_video_texture[PSMVideoFrameSection_Right]->texture_id;
+
+                if (left_texture_id != 0 && right_texture_id != 0)
+                {
+                    drawFullscreenStereoTexture(left_texture_id, right_texture_id);
+                }
+            } break;
+        case mode_disparity:
+            {
+                assert(m_video_texture[PSMVideoFrameSection_Primary] != nullptr);
+                unsigned int texture_id = m_video_texture[PSMVideoFrameSection_Primary]->texture_id;
+
+                if (texture_id != 0)
+                {
+                    drawFullscreenTexture(texture_id);
+                }
+            } break;
         }
     }
 
@@ -731,77 +868,53 @@ public:
         const float rightX0= midX, rightY0= topY;
         const float rightX1= rightX, rightY1= bottomY;
 
-        // Draw the last valid capture chessboard
-        if (m_opencv_state[PSMVideoFrameSection_Left]->lastValidImagePoints.size() > 0)
-        {
-            drawOpenCVChessBoardInSubWindow(
-                frameWidth, frameHeight,
-                leftX0, leftY0,
-                leftX1, leftY1,
-                reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Left]->lastValidImagePoints.data()), // cv::point2f is just two floats 
-                static_cast<int>(m_opencv_state[PSMVideoFrameSection_Left]->lastValidImagePoints.size()),
-                true);
-        }
-        if (m_opencv_state[PSMVideoFrameSection_Right]->lastValidImagePoints.size() > 0)
-        {
-            drawOpenCVChessBoardInSubWindow(
-                frameWidth, frameHeight,
-                rightX0, rightY0,
-                rightX1, rightY1,
-                reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Right]->lastValidImagePoints.data()), // cv::point2f is just two floats 
-                static_cast<int>(m_opencv_state[PSMVideoFrameSection_Right]->lastValidImagePoints.size()),
-                true);
-        } 
-
-
         // Draw the most recently capture chessboard
-        if (m_opencv_state[PSMVideoFrameSection_Left]->currentImagePoints.size() > 0)
+        if (m_opencv_section_state[PSMVideoFrameSection_Left]->currentImagePoints.size() > 0)
         {
             drawOpenCVChessBoardInSubWindow(
                 frameWidth, frameHeight,
                 leftX0, leftY0,
                 leftX1, leftY1,
-                reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Left]->currentImagePoints.data()), // cv::point2f is just two floats 
-                static_cast<int>(m_opencv_state[PSMVideoFrameSection_Left]->currentImagePoints.size()),
-                m_opencv_state[PSMVideoFrameSection_Left]->bCurrentImagePointsValid);
+                reinterpret_cast<float *>(m_opencv_section_state[PSMVideoFrameSection_Left]->currentImagePoints.data()), // cv::point2f is just two floats 
+                static_cast<int>(m_opencv_section_state[PSMVideoFrameSection_Left]->currentImagePoints.size()),
+                m_opencv_section_state[PSMVideoFrameSection_Left]->bCurrentImagePointsValid);
         }
-        if (m_opencv_state[PSMVideoFrameSection_Right]->currentImagePoints.size() > 0)
+        if (m_opencv_section_state[PSMVideoFrameSection_Right]->currentImagePoints.size() > 0)
         {
             drawOpenCVChessBoardInSubWindow(
                 frameWidth, frameHeight,
                 rightX0, rightY0,
                 rightX1, rightY1,
-                reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Right]->currentImagePoints.data()), // cv::point2f is just two floats 
-                static_cast<int>(m_opencv_state[PSMVideoFrameSection_Right]->currentImagePoints.size()),
-                m_opencv_state[PSMVideoFrameSection_Right]->bCurrentImagePointsValid);
+                reinterpret_cast<float *>(m_opencv_section_state[PSMVideoFrameSection_Right]->currentImagePoints.data()), // cv::point2f is just two floats 
+                static_cast<int>(m_opencv_section_state[PSMVideoFrameSection_Right]->currentImagePoints.size()),
+                m_opencv_section_state[PSMVideoFrameSection_Right]->bCurrentImagePointsValid);
         }
 
         // Draw the outlines of all of the chess boards 
-        if (m_opencv_state[PSMVideoFrameSection_Left]->quadList.size() > 0)
+        if (m_opencv_section_state[PSMVideoFrameSection_Left]->quadList.size() > 0)
         {
             drawQuadList2dInSubWindow(
                 frameWidth, frameHeight, 
                 leftX0, leftY0,
                 leftX1, leftY1,
                 glm::vec3(1.f, 1.f, 0.f), 
-                    reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Left]->quadList.data()), // cv::point2f is just two floats 
-                    static_cast<int>(m_opencv_state[PSMVideoFrameSection_Left]->quadList.size()));
+                reinterpret_cast<float *>(m_opencv_section_state[PSMVideoFrameSection_Left]->quadList.data()), // cv::point2f is just two floats 
+                static_cast<int>(m_opencv_section_state[PSMVideoFrameSection_Left]->quadList.size()));
         }
-        if (m_opencv_state[PSMVideoFrameSection_Right]->quadList.size() > 0)
+        if (m_opencv_section_state[PSMVideoFrameSection_Right]->quadList.size() > 0)
         {
             drawQuadList2dInSubWindow(
                 frameWidth, frameHeight, 
                 rightX0, rightY0,
                 rightX1, rightY1,
                 glm::vec3(1.f, 1.f, 0.f), 
-                    reinterpret_cast<float *>(m_opencv_state[PSMVideoFrameSection_Right]->quadList.data()), // cv::point2f is just two floats 
-                    static_cast<int>(m_opencv_state[PSMVideoFrameSection_Right]->quadList.size()));
+                reinterpret_cast<float *>(m_opencv_section_state[PSMVideoFrameSection_Right]->quadList.data()), // cv::point2f is just two floats 
+                static_cast<int>(m_opencv_section_state[PSMVideoFrameSection_Right]->quadList.size()));
         }
     }
 
     // Menu state
     eVideoDisplayMode m_videoDisplayMode;
-
     const PSMClientTrackerInfo &trackerInfo;
     float frameWidth;
     float frameHeight;
@@ -813,9 +926,20 @@ public:
     cv::Matx33d essential_matrix;
     cv::Matx33d fundamental_matrix;
     cv::Matx44d reprojection_matrix;
+    bool valid_new_calibration;
 
-    std::array<OpenCVStereoSectionState *, 2> m_opencv_state;
+    // Async task state
+    std::thread *async_compute_task;
+    std::atomic_bool async_task_completed;
+    PSMStereoTrackerIntrinsics async_task_result;
+
+    // Video buffer state
+    std::array<OpenCVStereoSectionState *, 2> m_opencv_section_state;
     std::array<TextureAsset *, 2> m_video_texture;
+    cv::Mat *m_raw_disparity_buffer;
+    cv::Mat *m_norm_disparity_buffer;
+    cv::Mat *m_bgr_disparity_buffer;
+    cv::Ptr<cv::StereoBM> m_stereo_block_matcher;
 };
 
 //-- public methods -----
@@ -873,7 +997,7 @@ void AppStage_StereoCalibration::exit()
 void AppStage_StereoCalibration::update()
 {
     if (m_menuState == AppStage_StereoCalibration::capture ||
-        m_menuState == AppStage_StereoCalibration::complete)
+        m_menuState == AppStage_StereoCalibration::testCalibration)
     {
         // Try and read the next video frame from shared memory
         if (PSM_PollTrackerVideoStream(m_tracker_view->tracker_info.tracker_id) == PSMResult_Success)
@@ -894,33 +1018,96 @@ void AppStage_StereoCalibration::update()
 
                 if (m_opencv_stereo_state->hasSampledAllChessBoards())
                 {
-                    PSMStereoTrackerIntrinsics new_stereo_intrinsics;
-
-                    m_opencv_stereo_state->computeCameraCalibration(m_square_length_mm, new_stereo_intrinsics);
-
-                    // Update the camera intrinsics for this camera
-                    request_tracker_set_intrinsic(new_stereo_intrinsics);
-
-                    m_opencv_stereo_state->m_videoDisplayMode= mode_undistored;
-                    m_menuState= AppStage_StereoCalibration::complete;
+                    // Kick off the async task (very expensive)
+                    m_opencv_stereo_state->computeCameraCalibration(m_square_length_mm);
+                    m_menuState= AppStage_StereoCalibration::processingCalibration;
                 }
             }
+        }
+    }
+    else if (m_menuState == AppStage_StereoCalibration::processingCalibration)
+    {
+        PSMStereoTrackerIntrinsics new_stereo_intrinsics;
+
+        if (m_opencv_stereo_state->getCameraCalibration(new_stereo_intrinsics))
+        {
+            // Update the camera intrinsics for this camera
+            request_tracker_set_intrinsic(new_stereo_intrinsics);
+
+            m_opencv_stereo_state->m_videoDisplayMode= mode_undistored;
+            m_menuState= AppStage_StereoCalibration::testCalibration;
         }
     }
 }
 
 void AppStage_StereoCalibration::render()
 {
-    if (m_menuState == AppStage_StereoCalibration::capture ||
-        m_menuState == AppStage_StereoCalibration::complete)
+    if (m_menuState == AppStage_StereoCalibration::capture)
     {
-        m_opencv_stereo_state->renderStereoVideoBuffers();
-
-        if (m_menuState == AppStage_StereoCalibration::capture)
-        {
-            m_opencv_stereo_state->renderStereoChessboard();
-        }
+        m_opencv_stereo_state->renderSelectedVideoBuffers();
+        m_opencv_stereo_state->renderStereoChessboard();
     }
+    else if (m_menuState == AppStage_StereoCalibration::testCalibration)
+    {
+        m_opencv_stereo_state->renderSelectedVideoBuffers();
+    }
+}
+
+void AppStage_StereoCalibration::renderCameraSettingsUI()
+{
+    const ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_ShowBorders |
+        ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoCollapse;
+
+    ImGui::SetNextWindowPos(ImVec2(10.f, ImGui::GetIO().DisplaySize.y - 100 - 10.f));
+    ImGui::SetNextWindowSize(ImVec2(275, 100));
+    ImGui::Begin("Video Controls", nullptr, window_flags);
+
+    if (ImGui::Button("<##Filter"))
+    {
+        m_opencv_stereo_state->m_videoDisplayMode =
+            static_cast<eVideoDisplayMode>(
+            (m_opencv_stereo_state->m_videoDisplayMode + eVideoDisplayMode::MAX_VIDEO_DISPLAY_MODES - 1)
+            % eVideoDisplayMode::MAX_VIDEO_DISPLAY_MODES);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(">##Filter"))
+    {
+        m_opencv_stereo_state->m_videoDisplayMode =
+            static_cast<eVideoDisplayMode>(
+            (m_opencv_stereo_state->m_videoDisplayMode + 1) % eVideoDisplayMode::MAX_VIDEO_DISPLAY_MODES);
+    }
+    ImGui::SameLine();
+    ImGui::Text("Video Filter Mode: %s", k_video_display_mode_names[m_opencv_stereo_state->m_videoDisplayMode]);
+
+    if (ImGui::Button("-##Exposure"))
+    {
+        request_tracker_set_temp_exposure(m_trackerExposure - 8);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("+##Exposure"))
+    {
+        request_tracker_set_temp_exposure(m_trackerExposure + 8);
+    }
+    ImGui::SameLine();
+    ImGui::Text("Exposure: %f", m_trackerExposure);
+
+    if (ImGui::Button("-##Gain"))
+    {
+        request_tracker_set_temp_gain(m_trackerGain - 8);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("+##Gain"))
+    {
+        request_tracker_set_temp_gain(m_trackerGain + 8);
+    }
+    ImGui::SameLine();
+    ImGui::Text("Gain: %f", m_trackerGain);
+
+    ImGui::End();
 }
 
 void AppStage_StereoCalibration::renderUI()
@@ -1008,54 +1195,7 @@ void AppStage_StereoCalibration::renderUI()
         {
             assert (m_opencv_stereo_state != nullptr);
 
-            {
-                ImGui::SetNextWindowPos(ImVec2(10.f, 10.f));
-                ImGui::SetNextWindowSize(ImVec2(275, 150));
-                ImGui::Begin("Video Controls", nullptr, window_flags);
-
-                if (ImGui::Button("<##Filter"))
-                {
-                    m_opencv_stereo_state->m_videoDisplayMode =
-                        static_cast<eVideoDisplayMode>(
-                        (m_opencv_stereo_state->m_videoDisplayMode + eVideoDisplayMode::MAX_VIDEO_DISPLAY_MODES - 1)
-                        % eVideoDisplayMode::MAX_VIDEO_DISPLAY_MODES);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button(">##Filter"))
-                {
-                    m_opencv_stereo_state->m_videoDisplayMode =
-                        static_cast<eVideoDisplayMode>(
-                        (m_opencv_stereo_state->m_videoDisplayMode + 1) % eVideoDisplayMode::MAX_VIDEO_DISPLAY_MODES);
-                }
-                ImGui::SameLine();
-                ImGui::Text("Video Filter Mode: %s", k_video_display_mode_names[m_opencv_stereo_state->m_videoDisplayMode]);
-
-                if (ImGui::Button("-##Exposure"))
-                {
-                    request_tracker_set_temp_exposure(m_trackerExposure - 8);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("+##Exposure"))
-                {
-                    request_tracker_set_temp_exposure(m_trackerExposure + 8);
-                }
-                ImGui::SameLine();
-                ImGui::Text("Exposure: %f", m_trackerExposure);
-
-                if (ImGui::Button("-##Gain"))
-                {
-                    request_tracker_set_temp_gain(m_trackerGain - 8);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("+##Gain"))
-                {
-                    request_tracker_set_temp_gain(m_trackerGain + 8);
-                }
-                ImGui::SameLine();
-                ImGui::Text("Gain: %f", m_trackerGain);
-
-                ImGui::End();
-            }
+            renderCameraSettingsUI();
 
             {
                 ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f - k_panel_width / 2.f, 20.f));
@@ -1066,7 +1206,7 @@ void AppStage_StereoCalibration::renderUI()
 
                 if (ImGui::Button("Restart"))
                 {
-                    m_opencv_stereo_state->resetCalibration();
+                    m_opencv_stereo_state->resetCaptureAndCalibration();
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Cancel"))
@@ -1082,25 +1222,48 @@ void AppStage_StereoCalibration::renderUI()
             }
         } break;
 
-    case eMenuState::complete:
+    case eMenuState::processingCalibration:
         {
+			const float k_wide_panel_width = 250.f;
+			ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f - k_wide_panel_width / 2.f, 20.f));
+			ImGui::SetNextWindowSize(ImVec2(k_wide_panel_width, 100));
+
+			ImGui::Begin("PROCESSING", nullptr, window_flags);
+
+			ImGui::TextWrapped(
+                "Computing stereo calibration.\n" \
+				"This may take a few seconds...");
+
+			ImGui::End();
+        } break;
+
+    case eMenuState::testCalibration:
+        {
+            renderCameraSettingsUI();
+
             ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f - k_panel_width / 2.f, 10.f));
             ImGui::SetNextWindowSize(ImVec2(k_panel_width, 110));
             ImGui::Begin(k_window_title, nullptr, window_flags);
 
-            ImGui::Text("Calibration complete!");
-            ImGui::Text("Avg Error: %f", m_opencv_stereo_state->reprojectionError);
+            if (!m_bypassCalibrationFlag)
+            {
+                ImGui::Text("Calibration complete!");
+                ImGui::Text("Avg Error: %f", m_opencv_stereo_state->reprojectionError);
+            }
 
+            if (!m_bypassCalibrationFlag)
+            {
+                if (ImGui::Button("Redo Calibration"))
+                {
+                    m_opencv_stereo_state->resetCaptureAndCalibration();
+
+                    m_menuState= eMenuState::capture;
+                }
+                ImGui::SameLine();
+            }
             if (ImGui::Button("Ok"))
             {
                 request_exit();
-            }
-
-            if (ImGui::Button("Redo Calibration"))
-            {
-                m_opencv_stereo_state->resetCalibration();
-
-                m_menuState= eMenuState::capture;
             }
 
             ImGui::End();
@@ -1211,11 +1374,20 @@ void AppStage_StereoCalibration::handle_tracker_start_stream_response(
             // Open the shared memory that the video stream is being written to
             if (PSM_OpenTrackerVideoStream(trackerView->tracker_info.tracker_id) == PSMResult_Success)
             {
-                thisPtr->m_opencv_stereo_state->allocateVideoTextures();
+                thisPtr->m_opencv_stereo_state->allocateVideoTextures(thisPtr->m_bypassCalibrationFlag);
 
-				// Warn the user if they are about to change the distortion calibration settings for the PS4Camera
-				if (trackerView->tracker_info.tracker_type == PSMTrackerType::PSMTracker_PS4Camera)
+                if (thisPtr->m_bypassCalibrationFlag)
+                {
+				    // Crank up the exposure and gain so that we can see the chessboard
+				    // These overrides will get rolled back once tracker gets closed
+				    thisPtr->request_tracker_set_temp_exposure(128.f);
+				    thisPtr->request_tracker_set_temp_gain(128.f);
+
+                    thisPtr->m_menuState = AppStage_StereoCalibration::testCalibration;
+                }
+				else if (trackerView->tracker_info.tracker_type == PSMTrackerType::PSMTracker_PS4Camera)
 				{
+    				// Warn the user if they are about to change the distortion calibration settings for the PS4Camera
 					thisPtr->m_menuState = AppStage_StereoCalibration::showWarning;
 				}
 				else
@@ -1352,6 +1524,16 @@ inline void psm_matrix34d_to_protocol_mat34(
     result->set_m20(m.m[2][0]); result->set_m21(m.m[2][1]); result->set_m22(m.m[2][2]); result->set_m23(m.m[2][3]);
 }
 
+inline void psm_matrix4d_to_protocol_mat44(
+    const PSMMatrix4d &m,
+    PSMoveProtocol::DoubleMatrix44 *result)
+{
+    result->set_m00(m.m[0][0]); result->set_m01(m.m[0][1]); result->set_m02(m.m[0][2]); result->set_m03(m.m[0][3]);
+    result->set_m10(m.m[1][0]); result->set_m11(m.m[1][1]); result->set_m12(m.m[1][2]); result->set_m13(m.m[1][3]);
+    result->set_m20(m.m[2][0]); result->set_m21(m.m[2][1]); result->set_m22(m.m[2][2]); result->set_m23(m.m[2][3]);
+    result->set_m30(m.m[3][0]); result->set_m31(m.m[3][1]); result->set_m32(m.m[3][2]); result->set_m33(m.m[3][3]);
+}
+
 void AppStage_StereoCalibration::request_tracker_set_intrinsic(
     const PSMStereoTrackerIntrinsics &new_intrinsics)
 {
@@ -1385,6 +1567,7 @@ void AppStage_StereoCalibration::request_tracker_set_intrinsic(
     psm_vector3d_to_protocol_vec3(new_intrinsics.translation_between_cameras, protocol_intrinsics->mutable_translation_between_cameras());
     psm_matrix3d_to_protocol_mat33(new_intrinsics.essential_matrix, protocol_intrinsics->mutable_essential_matrix());
     psm_matrix3d_to_protocol_mat33(new_intrinsics.fundamental_matrix, protocol_intrinsics->mutable_fundamental_matrix());
+    psm_matrix4d_to_protocol_mat44(new_intrinsics.reprojection_matrix, protocol_intrinsics->mutable_reprojection_matrix());
 
     PSM_SendOpaqueRequest(&request, nullptr);
 }

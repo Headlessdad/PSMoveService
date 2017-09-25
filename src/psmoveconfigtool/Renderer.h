@@ -99,13 +99,13 @@ void drawLineStrip(const glm::mat4 &transform, const glm::vec3 &color, const flo
 void drawQuadList2d(
     const float trackerWidth, const float trackerHeight, 
     const glm::vec3 &color, 
-    const float *points2d, const int point_count);
+    const float *point_data_2d, const int point_count); // points2d={x0,y0,x1,y1,x2,y2,x3,y3, x0,y0,...}
 void drawQuadList2dInSubWindow(
     const float trackerWidth, const float trackerHeight, 
     const float windowX0, const float windowY0,
     const float windowX1, const float windowY1,
     const glm::vec3 &color, 
-    const float *points2d, const int point_count);
+    const float *point_data_2d, const int point_count);  // points2d={x0,y0,x1,y1,x2,y2,x3,y3, x0,y0,...}
 void drawOpenCVChessBoard(
     const float trackerWidth, const float trackerHeight,
     const float *points2d, const int point_count, 

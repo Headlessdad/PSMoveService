@@ -37,6 +37,9 @@ Eigen::Matrix4f glm_mat4_to_eigen_matrix4f(const glm::mat4 &m);
 cv::Matx33f psmove_matrix3x3_to_cv_mat33f(const PSMMatrix3f &in);
 cv::Matx33f psmove_matrix3x3_to_cv_mat33f(const PSMMatrix3d &in);
 cv::Matx33d psmove_matrix3x3_to_cv_mat33d(const PSMMatrix3d &in);
+cv::Matx34d psmove_matrix3x4_to_cv_mat34d(const PSMMatrix34d &in);
+cv::Matx44d psmove_matrix4x4_to_cv_mat44d(const PSMMatrix4d &in);
+cv::Vec3d psmove_vector3d_to_cv_vec3d(const PSMVector3d &in);
 
 // OpenCV types to PSMove types
 PSMMatrix3f cv_mat33f_to_psm_matrix3x3(const cv::Matx33f &in);

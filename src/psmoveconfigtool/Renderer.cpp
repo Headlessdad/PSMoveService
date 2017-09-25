@@ -979,7 +979,7 @@ void drawQuadList2dInSubWindow(
     const float windowX0, const float windowY0,
     const float windowX1, const float windowY1,
     const glm::vec3 &color, 
-    const float *points2d, const int point_count)
+    const float *point_data_2d, const int point_count)
 {
     assert(Renderer::getIsRenderingStage());
     assert((point_count % 4) == 0);
@@ -1002,26 +1002,26 @@ void drawQuadList2dInSubWindow(
     // Draw line strip connecting all of the points on the line strip
     glColor3fv(glm::value_ptr(color));
     glBegin(GL_LINES);
-    for (int sampleIndex= 0; sampleIndex < point_count; sampleIndex+=4)
+    for (int point_index= 0; point_index < point_count; point_index+=4) // 4 points per quad
     {
-        const int sampleOffset= sampleIndex*2;
-
-        glm::vec3 prevRemappedVertex=
-            remapPointIntoSubWindow(
-                trackerWidth, trackerHeight,
-                windowX0, windowY0,
-                windowX1, windowY1,
-                glm::vec3(points2d[sampleOffset+6], points2d[sampleOffset+7], 0.5f));
-
-        for (int vertexIndex = 0; vertexIndex < 4; ++vertexIndex)
+        int prev_vertex_index= 3;
+        for (int vertex_index = 0; vertex_index < 4; ++vertex_index)
         {
-            const int xVertexOffset= vertexIndex*2;
-            const int yVertexOffset= xVertexOffset+1;
+            const glm::vec3 prev_vertex(
+                point_data_2d[2*(point_index+prev_vertex_index)],     // x
+                point_data_2d[2*(point_index+prev_vertex_index) + 1], // y 
+                0.5f);
             const glm::vec3 vertex(
-                points2d[sampleOffset + xVertexOffset], 
-                points2d[sampleOffset + yVertexOffset], 
+                point_data_2d[2*(point_index+vertex_index)],     // x
+                point_data_2d[2*(point_index+vertex_index) + 1], // y
                 0.5f);
 
+            glm::vec3 prevRemappedVertex=
+                remapPointIntoSubWindow(
+                    trackerWidth, trackerHeight,
+                    windowX0, windowY0,
+                    windowX1, windowY1,
+                    prev_vertex);
             glm::vec3 remappedVertex=
                 remapPointIntoSubWindow(
                     trackerWidth, trackerHeight,
@@ -1029,7 +1029,10 @@ void drawQuadList2dInSubWindow(
                     windowX1, windowY1,
                     vertex);
 
-            prevRemappedVertex= remappedVertex;
+            glVertex3fv(glm::value_ptr(prevRemappedVertex));
+            glVertex3fv(glm::value_ptr(remappedVertex));
+
+            prev_vertex_index= vertex_index;
         }
     }
     glEnd();

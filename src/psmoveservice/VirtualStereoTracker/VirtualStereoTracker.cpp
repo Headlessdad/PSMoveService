@@ -697,8 +697,8 @@ void VirtualStereoTracker::setFrameWidth(double value, bool bUpdateConfig)
 {
     if (getIsOpen())
     {
-	    LeftTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
-        RightTracker->setFrameWidth(cfg.tracker_intrinsics.pixel_width, false);
+	    LeftTracker->setFrameWidth(value, false);
+        RightTracker->setFrameWidth(value, false);
     }
 
 	if (bUpdateConfig)
@@ -717,8 +717,8 @@ void VirtualStereoTracker::setFrameHeight(double value, bool bUpdateConfig)
 {
     if (getIsOpen())
     {
-	    LeftTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
-        RightTracker->setFrameHeight(cfg.tracker_intrinsics.pixel_height, false);
+	    LeftTracker->setFrameHeight(value, false);
+        RightTracker->setFrameHeight(value, false);
     }
 
 	if (bUpdateConfig)
@@ -737,8 +737,8 @@ void VirtualStereoTracker::setFrameRate(double value, bool bUpdateConfig)
 {
     if (getIsOpen())
     {
-        LeftTracker->setFrameRate(cfg.frame_rate, false);
-        RightTracker->setFrameRate(cfg.frame_rate, false);
+        LeftTracker->setFrameRate(value, false);
+        RightTracker->setFrameRate(value, false);
     }
 
 	if (bUpdateConfig)
@@ -757,8 +757,8 @@ void VirtualStereoTracker::setExposure(double value, bool bUpdateConfig)
 {
     if (getIsOpen())
     {
-        LeftTracker->setExposure(cfg.exposure, false);
-        RightTracker->setFrameRate(cfg.exposure, false);
+        LeftTracker->setExposure(value, false);
+        RightTracker->setExposure(value, false);
     }
 
 	if (bUpdateConfig)
@@ -777,8 +777,8 @@ void VirtualStereoTracker::setGain(double value, bool bUpdateConfig)
 {
     if (getIsOpen())
     {
-        LeftTracker->setGain(cfg.gain, false);
-        RightTracker->setGain(cfg.gain, false);
+        LeftTracker->setGain(value, false);
+        RightTracker->setGain(value, false);
     }
 
 	if (bUpdateConfig)

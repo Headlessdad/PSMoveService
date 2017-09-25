@@ -30,7 +30,11 @@ public:
     void request_tracker_reload_settings();
     void request_exit();
 
+    inline void setBypassCalibrationFlag(bool flag) { m_bypassCalibrationFlag= flag; }
+
 protected:
+    void renderCameraSettingsUI();
+
     static void handle_tracker_start_stream_response(
         const PSMResponseMessage *response,
         void *userdata);
@@ -48,7 +52,8 @@ private:
 		showWarning,
 		enterBoardSettings,
         capture,
-        complete,
+        processingCalibration,
+        testCalibration,
 
         pendingTrackerStartStreamRequest,
         failedTrackerStartStreamRequest,
@@ -67,6 +72,7 @@ private:
     // Tracker Settings state
     float m_trackerExposure;
     float m_trackerGain;
+    bool m_bypassCalibrationFlag;
 
     bool m_bStreamIsActive;
     PSMTracker *m_tracker_view;
