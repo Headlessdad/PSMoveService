@@ -361,8 +361,9 @@ int OpenCVBGRToHSVMapper::m_refCount= 0;
 class OpenCVBufferState
 {
 public:
-    OpenCVBufferState(ITrackerInterface *device)
-        : bgrBuffer(nullptr)
+    OpenCVBufferState(ITrackerInterface *device, ITrackerInterface::eTrackerVideoSection _section)
+        : section(_section)
+        , bgrBuffer(nullptr)
         , bgrShmemBuffer(nullptr)
         , hsvBuffer(nullptr)
         , gsLowerBuffer(nullptr)
@@ -648,7 +649,7 @@ public:
     draw_pose_projection(const CommonDeviceTrackingProjection &pose_projection)
     {
         // Draw the projection of the pose onto the shared mem buffer.
-        switch (pose_projection.shape_type)
+        switch (pose_projection.projection_type)
         {
         case eCommonTrackingProjectionType::ProjectionType_Ellipse:
             {
@@ -657,17 +658,17 @@ public:
 
                 //Create cv::ellipse from pose_estimate
                 cv::Point ell_center(
-                    static_cast<int>(pose_projection.shape.ellipse.center.x),
-                    static_cast<int>(pose_projection.shape.ellipse.center.y));
+                    static_cast<int>(pose_projection.projections[section].shape.ellipse.center.x),
+                    static_cast<int>(pose_projection.projections[section].shape.ellipse.center.y));
                 cv::Size ell_size(
-                    static_cast<int>(pose_projection.shape.ellipse.half_x_extent),
-                    static_cast<int>(pose_projection.shape.ellipse.half_y_extent));
+                    static_cast<int>(pose_projection.projections[section].shape.ellipse.half_x_extent),
+                    static_cast<int>(pose_projection.projections[section].shape.ellipse.half_y_extent));
 
                 //Draw ellipse on bgrShmemBuffer
                 cv::ellipse(*bgrShmemBuffer,
                     ell_center,
                     ell_size,
-                    pose_projection.shape.ellipse.angle,
+                    pose_projection.projections[section].shape.ellipse.angle,
                     0, 360, cv::Scalar(0, 0, 255));
                 cv::drawMarker(*bgrShmemBuffer, ell_center, cv::Scalar(0, 0, 255), 0,
                     (ell_size.height < ell_size.width) ? ell_size.height * 2 : ell_size.width * 2);
@@ -680,11 +681,11 @@ public:
                 for (int point_index = 0; point_index < CommonDeviceTrackingShape::QuadVertexCount; ++point_index)
                 {
                     cv::Point pt1(
-                        static_cast<int>(pose_projection.shape.lightbar.quad[prev_point_index].x),
-                        static_cast<int>(pose_projection.shape.lightbar.quad[prev_point_index].y));
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.quad[prev_point_index].x),
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.quad[prev_point_index].y));
                     cv::Point pt2(
-                        static_cast<int>(pose_projection.shape.lightbar.quad[point_index].x),
-                        static_cast<int>(pose_projection.shape.lightbar.quad[point_index].y));
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.quad[point_index].x),
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.quad[point_index].y));
                     cv::line(*bgrShmemBuffer, pt1, pt2, cv::Scalar(0, 0, 255));
 
                     prev_point_index = point_index;
@@ -694,11 +695,11 @@ public:
                 for (int point_index = 0; point_index < CommonDeviceTrackingShape::TriVertexCount; ++point_index)
                 {
                     cv::Point pt1(
-                        static_cast<int>(pose_projection.shape.lightbar.triangle[prev_point_index].x),
-                        static_cast<int>(pose_projection.shape.lightbar.triangle[prev_point_index].y));
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.triangle[prev_point_index].x),
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.triangle[prev_point_index].y));
                     cv::Point pt2(
-                        static_cast<int>(pose_projection.shape.lightbar.triangle[point_index].x),
-                        static_cast<int>(pose_projection.shape.lightbar.triangle[point_index].y));
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.triangle[point_index].x),
+                        static_cast<int>(pose_projection.projections[section].shape.lightbar.triangle[point_index].y));
                     cv::line(*bgrShmemBuffer, pt1, pt2, cv::Scalar(0, 0, 255));
 
                     prev_point_index = point_index;
@@ -707,11 +708,11 @@ public:
             } break;
         case eCommonTrackingProjectionType::ProjectionType_Points:
             {
-                for (int point_index = 0; point_index < pose_projection.shape.points.point_count; ++point_index)
+                for (int point_index = 0; point_index < pose_projection.projections[section].shape.points.point_count; ++point_index)
                 {
                     cv::Point pt(
-                        static_cast<int>(pose_projection.shape.points.point[point_index].x),
-                        static_cast<int>(pose_projection.shape.points.point[point_index].y));
+                        static_cast<int>(pose_projection.projections[section].shape.points.point[point_index].x),
+                        static_cast<int>(pose_projection.projections[section].shape.points.point[point_index].y));
                     cv::drawMarker(*bgrShmemBuffer, pt, cv::Scalar(0, 0, 255));
                 }
             } break;
@@ -721,6 +722,7 @@ public:
         }		
     }
 
+    ITrackerInterface::eTrackerVideoSection section;
     int frameWidth;
     int frameHeight;
 
@@ -749,19 +751,27 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
                                                cv::Matx<float, 5, 1> &distortionOut);
 static cv::Matx34f computeOpenCVCameraPinholeMatrix(const ITrackerInterface *tracker_device,
                                                     ITrackerInterface::eTrackerVideoSection section);
-static bool computeTrackerRelativeLightBarProjection(
+static bool computeTrackerRelativeLightBarProjectionForSection(
     const CommonDeviceTrackingShape *tracking_shape,
+    const ITrackerInterface::eTrackerVideoSection section,
     const t_opencv_float_contour &opencv_contour,
     CommonDeviceTrackingProjection *out_projection);
-static bool computeTrackerRelativeLightBarPose(
+static bool computeMonoTrackerRelativeLightBarPose(
     const ITrackerInterface *tracker_device,
     const CommonDeviceTrackingShape *tracking_shape,
     const CommonDeviceTrackingProjection *projection,
     const CommonDevicePose *tracker_relative_pose_guess,
     ControllerOpticalPoseEstimation *out_pose_estimate);
-static bool computeTrackerRelativePointCloudContourPose(
+static bool computeStereoTrackerRelativeLightBarPose(
     const ITrackerInterface *tracker_device,
     const CommonDeviceTrackingShape *tracking_shape,
+    const CommonDeviceTrackingProjection *projection,
+    const CommonDevicePose *tracker_relative_pose_guess,
+    ControllerOpticalPoseEstimation *out_pose_estimate);
+static bool computeTrackerRelativePointCloudContourPoseInSection(
+    const ITrackerInterface *tracker_device,
+    const CommonDeviceTrackingShape *tracking_shape,
+    const ITrackerInterface::eTrackerVideoSection section,
     const t_opencv_float_contour_list &opencv_contours,
     const CommonDevicePose *tracker_relative_pose_guess,
     HMDOpticalPoseEstimation *out_pose_estimate);
@@ -1002,12 +1012,15 @@ void ServerTrackerView::reallocate_opencv_buffer_state()
     // Allocate the OpenCV scratch buffers used for finding tracking blobs
     if (m_device->getIsStereoCamera())
     {
-        m_opencv_buffer_state[ITrackerInterface::LeftSection] = new OpenCVBufferState(m_device);
-        m_opencv_buffer_state[ITrackerInterface::RightSection] = new OpenCVBufferState(m_device);
+        m_opencv_buffer_state[ITrackerInterface::LeftSection] = 
+            new OpenCVBufferState(m_device, ITrackerInterface::LeftSection);
+        m_opencv_buffer_state[ITrackerInterface::RightSection] = 
+            new OpenCVBufferState(m_device, ITrackerInterface::RightSection);
     }
     else
     {
-        m_opencv_buffer_state[ITrackerInterface::PrimarySection] = new OpenCVBufferState(m_device);
+        m_opencv_buffer_state[ITrackerInterface::PrimarySection] =
+            new OpenCVBufferState(m_device, ITrackerInterface::PrimarySection);
     }
 }
 
@@ -1312,14 +1325,15 @@ ServerTrackerView::computeProjectionForController(
                 ITrackerInterface::LeftSection,
                 out_pose_estimate);
         bool bRightSuccess= true;
-            //computeProjectionForControllerInSection(
-            //    tracked_controller,
-            //    tracking_shape,
-            //    ITrackerInterface::RightSection,
-            //    out_pose_estimate);
+            computeProjectionForControllerInSection(
+                tracked_controller,
+                tracking_shape,
+                ITrackerInterface::RightSection,
+                out_pose_estimate);
 
         if (bLeftSuccess && bRightSuccess)
         {
+            out_pose_estimate->projection.projection_count= CommonDeviceTrackingProjection::STEREO_PROJECTION_COUNT;
             //TODO: Compute pose estimate using stereo triangulation
 	        //4) Find corresponding points on 2d curves using fundamental matrix
 	        //5) Triangulate a single 3d curve
@@ -1337,6 +1351,11 @@ ServerTrackerView::computeProjectionForController(
                 tracking_shape,
                 ITrackerInterface::PrimarySection,
                 out_pose_estimate);
+
+        if (bSuccess)
+        {
+            out_pose_estimate->projection.projection_count= CommonDeviceTrackingProjection::MONO_PROJECTION_COUNT;
+        }
     }
 
     return bSuccess;
@@ -1456,21 +1475,22 @@ ServerTrackerView::computeProjectionForControllerInSection(
                     out_pose_estimate->bOrientationValid = false;
 
                     // Save off the projection of the sphere (an ellipse)
-                    out_pose_estimate->projection.shape.ellipse.angle = ellipse_projection.angle;
-                    out_pose_estimate->projection.screen_area= ellipse_projection.area;
+                    out_pose_estimate->projection.projections[section].shape.ellipse.angle = ellipse_projection.angle;
+                    out_pose_estimate->projection.projections[section].screen_area= ellipse_projection.area;
                     //The ellipse projection is still in normalized space.
                     //i.e., it is a 2-dimensional ellipse floating somewhere.
                     //We must reproject it onto the camera.
                     //TODO: Use opencv's project points instead of manual way below
                     //because it will account for distortion, at least for the center point.
-                    out_pose_estimate->projection.shape_type = eCommonTrackingProjectionType::ProjectionType_Ellipse;
-                    out_pose_estimate->projection.shape.ellipse.center.set(
+                    out_pose_estimate->projection.projection_type = eCommonTrackingProjectionType::ProjectionType_Ellipse;
+                    out_pose_estimate->projection.projections[section].shape.ellipse.center.set(
                         ellipse_projection.center.x()*camera_matrix.val[0] + camera_matrix.val[2],
                         ellipse_projection.center.y()*camera_matrix.val[4] + camera_matrix.val[5]);
-                    out_pose_estimate->projection.shape.ellipse.half_x_extent = ellipse_projection.extents.x()*camera_matrix.val[0];
-                    out_pose_estimate->projection.shape.ellipse.half_y_extent = ellipse_projection.extents.y()*camera_matrix.val[0];
-                    out_pose_estimate->projection.screen_area=
-                        k_real_pi*out_pose_estimate->projection.shape.ellipse.half_x_extent*out_pose_estimate->projection.shape.ellipse.half_y_extent;
+                    out_pose_estimate->projection.projections[section].shape.ellipse.half_x_extent = ellipse_projection.extents.x()*camera_matrix.val[0];
+                    out_pose_estimate->projection.projections[section].shape.ellipse.half_y_extent = ellipse_projection.extents.y()*camera_matrix.val[0];
+                    out_pose_estimate->projection.projections[section].screen_area=
+                        k_real_pi*out_pose_estimate->projection.projections[section].shape.ellipse.half_x_extent
+                        *out_pose_estimate->projection.projections[section].shape.ellipse.half_y_extent;
                 
                     //Draw results onto m_opencv_buffer_state
                     m_opencv_buffer_state[section]->draw_pose_projection(out_pose_estimate->projection);
@@ -1499,8 +1519,9 @@ ServerTrackerView::computeProjectionForControllerInSection(
 
                 // Compute the lightbar tracking projection from the undistored contour
                 bSuccess=
-                    computeTrackerRelativeLightBarProjection(
+                    computeTrackerRelativeLightBarProjectionForSection(
                         tracking_shape,
+                        section,
                         undistort_contour,
                         &out_pose_estimate->projection);
 
@@ -1522,7 +1543,7 @@ ServerTrackerView::computeProjectionForControllerInSection(
 
         if (ROI.width < screenWidth || ROI.height < screenHeight)
         {
-            bSuccess= out_pose_estimate->projection.screen_area >= trackerMgrConfig.min_valid_projection_area;
+            bSuccess= out_pose_estimate->projection.projections[section].screen_area >= trackerMgrConfig.min_valid_projection_area;
         }
     }
 
@@ -1545,14 +1566,16 @@ bool ServerTrackerView::computeProjectionForHMD(
                 ITrackerInterface::LeftSection,
                 out_pose_estimate);
         bool bRightSuccess= true;
-            //computeProjectionForControllerInSection(
-            //    tracked_hmd,
-            //    tracking_shape,
-            //    ITrackerInterface::RightSection,
-            //    out_pose_estimate);
+            computeProjectionForHmdInSection(
+                tracked_hmd,
+                tracking_shape,
+                ITrackerInterface::RightSection,
+                out_pose_estimate);
 
         if (bLeftSuccess && bRightSuccess)
         {
+            out_pose_estimate->projection.projection_count= CommonDeviceTrackingProjection::STEREO_PROJECTION_COUNT;
+
             //TODO: Compute pose estimate using stereo triangulation
 	        //4) Find corresponding points on 2d curves using fundamental matrix
 	        //5) Triangulate a single 3d curve
@@ -1564,6 +1587,8 @@ bool ServerTrackerView::computeProjectionForHMD(
     }
     else
     {
+        out_pose_estimate->projection.projection_count= CommonDeviceTrackingProjection::MONO_PROJECTION_COUNT;
+
         bSuccess=
             computeProjectionForHmdInSection(
                 tracked_hmd,
@@ -1624,7 +1649,8 @@ ServerTrackerView::computeProjectionForHmdInSection(
     {
         bSuccess = 
             m_opencv_buffer_state[section]->computeBiggestNContours(
-                hsvColorRange, biggest_contours, contour_areas, CommonDeviceTrackingProjection::MAX_POINT_CLOUD_POINT_COUNT);
+                hsvColorRange, biggest_contours, contour_areas, 
+                CommonDeviceTrackingShape::MAX_POINT_CLOUD_POINT_COUNT);
     }
 
     // Compute the tracker relative 3d position of the controller from the contour
@@ -1686,21 +1712,22 @@ ServerTrackerView::computeProjectionForHmdInSection(
                     out_pose_estimate->bOrientationValid = false;
 
                     // Save off the projection of the sphere (an ellipse)
-                    out_pose_estimate->projection.shape.ellipse.angle = ellipse_projection.angle;
-                    out_pose_estimate->projection.screen_area= ellipse_projection.area;
+                    out_pose_estimate->projection.projections[section].shape.ellipse.angle = ellipse_projection.angle;
+                    out_pose_estimate->projection.projections[section].screen_area= ellipse_projection.area;
                     //The ellipse projection is still in normalized space.
                     //i.e., it is a 2-dimensional ellipse floating somewhere.
                     //We must reproject it onto the camera.
                     //TODO: Use opencv's project points instead of manual way below
                     //because it will account for distortion, at least for the center point.
-                    out_pose_estimate->projection.shape_type = eCommonTrackingProjectionType::ProjectionType_Ellipse;
-                    out_pose_estimate->projection.shape.ellipse.center.set(
+                    out_pose_estimate->projection.projection_type = eCommonTrackingProjectionType::ProjectionType_Ellipse;
+                    out_pose_estimate->projection.projections[section].shape.ellipse.center.set(
                         ellipse_projection.center.x()*camera_matrix.val[0] + camera_matrix.val[2],
                         ellipse_projection.center.y()*camera_matrix.val[4] + camera_matrix.val[5]);
-                    out_pose_estimate->projection.shape.ellipse.half_x_extent = ellipse_projection.extents.x()*camera_matrix.val[0];
-                    out_pose_estimate->projection.shape.ellipse.half_y_extent = ellipse_projection.extents.y()*camera_matrix.val[0];
-                    out_pose_estimate->projection.screen_area=
-                        k_real_pi*out_pose_estimate->projection.shape.ellipse.half_x_extent*out_pose_estimate->projection.shape.ellipse.half_y_extent;
+                    out_pose_estimate->projection.projections[section].shape.ellipse.half_x_extent = ellipse_projection.extents.x()*camera_matrix.val[0];
+                    out_pose_estimate->projection.projections[section].shape.ellipse.half_y_extent = ellipse_projection.extents.y()*camera_matrix.val[0];
+                    out_pose_estimate->projection.projections[section].screen_area=
+                        k_real_pi*out_pose_estimate->projection.projections[section].shape.ellipse.half_x_extent
+                        *out_pose_estimate->projection.projections[section].shape.ellipse.half_y_extent;
                 
                     //Draw results onto m_opencv_buffer_state
                     m_opencv_buffer_state[section]->draw_pose_projection(out_pose_estimate->projection);
@@ -1736,9 +1763,10 @@ ServerTrackerView::computeProjectionForHmdInSection(
                 }
 
                 bSuccess =
-                    computeTrackerRelativePointCloudContourPose(
+                    computeTrackerRelativePointCloudContourPoseInSection(
                         m_device,
                         tracking_shape,
+                        section,
                         undistorted_contours,
                         prior_post_est->bCurrentlyTracking ? &tracker_pose_guess : nullptr,
                         out_pose_estimate);
@@ -1764,7 +1792,7 @@ ServerTrackerView::computePoseForProjection(
 {
     bool bSuccess = false;
 
-    switch (projection->shape_type)
+    switch (projection->projection_type)
     {
     case eCommonTrackingShapeType::Sphere:
         {
@@ -1773,13 +1801,26 @@ ServerTrackerView::computePoseForProjection(
         } break;
     case eCommonTrackingShapeType::LightBar:
         {
-            bSuccess =
-                computeTrackerRelativeLightBarPose(
-                    m_device,
-                    tracking_shape,
-                    projection,
-                    pose_guess,
-                    out_pose_estimate);
+            if (m_device->getIsStereoCamera())
+            {
+                bSuccess =
+                    computeStereoTrackerRelativeLightBarPose(
+                        m_device,
+                        tracking_shape,
+                        projection,
+                        pose_guess,
+                        out_pose_estimate);
+            }
+            else
+            {
+                bSuccess =
+                    computeMonoTrackerRelativeLightBarPose(
+                        m_device,
+                        tracking_shape,
+                        projection,
+                        pose_guess,
+                        out_pose_estimate);
+            }
         } break;
     default:
         assert(0 && "Unreachable");
@@ -1871,20 +1912,20 @@ ServerTrackerView::triangulateWorldPose(
     const ServerTrackerView *other_tracker,
     const CommonDeviceTrackingProjection *other_tracker_relative_projection)
 {
-    assert(tracker_relative_projection->shape_type == other_tracker_relative_projection->shape_type);
+    assert(tracker_relative_projection->projection_type == other_tracker_relative_projection->projection_type);
     CommonDevicePose pose;
 
     pose.clear();
-    switch(tracker_relative_projection->shape_type)
+    switch(tracker_relative_projection->projection_type)
     {
     case eCommonTrackingProjectionType::ProjectionType_Ellipse:
         {
             pose.PositionCm =
                 triangulateWorldPosition(
                     tracker,
-                    &tracker_relative_projection->shape.ellipse.center,
+                    &tracker_relative_projection->projections[0].shape.ellipse.center,
                     other_tracker,
-                    &other_tracker_relative_projection->shape.ellipse.center);
+                    &other_tracker_relative_projection->projections[0].shape.ellipse.center);
             pose.Orientation.clear();
         } break;
     case eCommonTrackingProjectionType::ProjectionType_LightBar:
@@ -1895,15 +1936,15 @@ ServerTrackerView::triangulateWorldPose(
             CommonDeviceScreenLocation other_screen_locations[k_vertex_count];			
             for (int quad_index = 0; quad_index < CommonDeviceTrackingShape::QuadVertexCount; ++quad_index)
             {
-                screen_locations[quad_index]= tracker_relative_projection->shape.lightbar.quad[quad_index];
-                other_screen_locations[quad_index]= other_tracker_relative_projection->shape.lightbar.quad[quad_index];
+                screen_locations[quad_index]= tracker_relative_projection->projections[0].shape.lightbar.quad[quad_index];
+                other_screen_locations[quad_index]= other_tracker_relative_projection->projections[0].shape.lightbar.quad[quad_index];
             }
             for (int tri_index = 0; tri_index < CommonDeviceTrackingShape::TriVertexCount; ++tri_index)
             {
                 screen_locations[CommonDeviceTrackingShape::QuadVertexCount + tri_index]= 
-                    tracker_relative_projection->shape.lightbar.triangle[tri_index];
+                    tracker_relative_projection->projections[0].shape.lightbar.triangle[tri_index];
                 other_screen_locations[CommonDeviceTrackingShape::QuadVertexCount + tri_index]=
-                    other_tracker_relative_projection->shape.lightbar.triangle[tri_index];
+                    other_tracker_relative_projection->projections[0].shape.lightbar.triangle[tri_index];
             }
 
             // Triangulate the 7 points on the lightbar
@@ -2131,10 +2172,12 @@ ServerTrackerView::projectTrackerRelativePositions(
 }
 
 CommonDeviceScreenLocation
-ServerTrackerView::projectTrackerRelativePosition(const CommonDevicePosition *trackerRelativePosition) const
+ServerTrackerView::projectTrackerRelativePosition(
+    const ITrackerInterface::eTrackerVideoSection section,
+    const CommonDevicePosition *trackerRelativePosition) const
 {
     std::vector<CommonDevicePosition> trp_vec {*trackerRelativePosition};
-    CommonDeviceScreenLocation screenLocation = projectTrackerRelativePositions(ITrackerInterface::PrimarySection, trp_vec)[0];
+    CommonDeviceScreenLocation screenLocation = projectTrackerRelativePositions(section, trp_vec)[0];
 
     return screenLocation;
 }
@@ -2240,8 +2283,9 @@ static cv::Matx34f computeOpenCVCameraPinholeMatrix(
     return pinhole_matrix;
 }
 
-static bool computeTrackerRelativeLightBarProjection(
+static bool computeTrackerRelativeLightBarProjectionForSection(
     const CommonDeviceTrackingShape *tracking_shape,
+    const ITrackerInterface::eTrackerVideoSection section,
     const t_opencv_float_contour &opencv_contour,
     CommonDeviceTrackingProjection *out_projection)
 {
@@ -2299,29 +2343,29 @@ static bool computeTrackerRelativeLightBarProjection(
     // Return the projection of the tracking shape
     if (bValidTrackerProjection)
     {
-        out_projection->shape_type = eCommonTrackingProjectionType::ProjectionType_LightBar;
+        out_projection->projection_type = eCommonTrackingProjectionType::ProjectionType_LightBar;
 
         for (int vertex_index = 0; vertex_index < 3; ++vertex_index)
         {
             const cv::Point2f &cvPoint = cvImagePoints[vertex_index];
 
-            out_projection->shape.lightbar.triangle[vertex_index] = { cvPoint.x, cvPoint.y };
+            out_projection->projections[section].shape.lightbar.triangle[vertex_index] = { cvPoint.x, cvPoint.y };
         }
 
         for (int vertex_index = 0; vertex_index < 4; ++vertex_index)
         {
             const cv::Point2f &cvPoint = cvImagePoints[vertex_index + 3];
 
-            out_projection->shape.lightbar.quad[vertex_index] = { cvPoint.x, cvPoint.y };
+            out_projection->projections[section].shape.lightbar.quad[vertex_index] = { cvPoint.x, cvPoint.y };
         }
 
-        out_projection->screen_area= projectionArea;
+        out_projection->projections[section].screen_area= projectionArea;
     }
 
     return bValidTrackerProjection;
 }
 
-static bool computeTrackerRelativeLightBarPose(
+static bool computeMonoTrackerRelativeLightBarPose(
     const ITrackerInterface *tracker_device,
     const CommonDeviceTrackingShape *tracking_shape,
     const CommonDeviceTrackingProjection *projection,
@@ -2329,21 +2373,21 @@ static bool computeTrackerRelativeLightBarPose(
     ControllerOpticalPoseEstimation *out_pose_estimate)
 {
     assert(tracking_shape->shape_type == eCommonTrackingShapeType::LightBar);
-    assert(projection->shape_type == eCommonTrackingProjectionType::ProjectionType_LightBar);
+    assert(projection->projection_type == eCommonTrackingProjectionType::ProjectionType_LightBar);
 
     bool bValidTrackerPose= true;
     std::vector<cv::Point2f> cvImagePoints;
 
     for (int vertex_index = 0; vertex_index < 3; ++vertex_index)
     {
-        const CommonDeviceScreenLocation &screenLocation= projection->shape.lightbar.triangle[vertex_index];
+        const CommonDeviceScreenLocation &screenLocation= projection->projections[0].shape.lightbar.triangle[vertex_index];
 
         cvImagePoints.push_back(cv::Point2f(screenLocation.x, screenLocation.y));
     }
 
     for (int vertex_index = 0; vertex_index < 4; ++vertex_index)
     {
-        const CommonDeviceScreenLocation &screenLocation = projection->shape.lightbar.quad[vertex_index];
+        const CommonDeviceScreenLocation &screenLocation = projection->projections[0].shape.lightbar.quad[vertex_index];
 
         cvImagePoints.push_back(cv::Point2f(screenLocation.x, screenLocation.y));
     }
@@ -2456,9 +2500,21 @@ static bool computeTrackerRelativeLightBarPose(
     return bValidTrackerPose;
 }
 
-static bool computeTrackerRelativePointCloudContourPose(
+static bool computeStereoTrackerRelativeLightBarPose(
     const ITrackerInterface *tracker_device,
     const CommonDeviceTrackingShape *tracking_shape,
+    const CommonDeviceTrackingProjection *projection,
+    const CommonDevicePose *tracker_relative_pose_guess,
+    ControllerOpticalPoseEstimation *out_pose_estimate)
+{
+    // TODO
+    return false;
+}
+
+static bool computeTrackerRelativePointCloudContourPoseInSection(
+    const ITrackerInterface *tracker_device,
+    const CommonDeviceTrackingShape *tracking_shape,
+    const ITrackerInterface::eTrackerVideoSection section,
     const t_opencv_float_contour_list &opencv_contours,
     const CommonDevicePose *tracker_relative_pose_guess,
     HMDOpticalPoseEstimation *out_pose_estimate)
@@ -2492,17 +2548,17 @@ static bool computeTrackerRelativePointCloudContourPose(
         CommonDeviceTrackingProjection *out_projection = &out_pose_estimate->projection;
         const int imagePointCount = static_cast<int>(cvImagePoints.size());
 
-        out_projection->shape_type = eCommonTrackingProjectionType::ProjectionType_Points;
+        out_projection->projection_type = eCommonTrackingProjectionType::ProjectionType_Points;
 
         for (int vertex_index = 0; vertex_index < imagePointCount; ++vertex_index)
         {
             const cv::Point2f &cvPoint = cvImagePoints[vertex_index];
 
-            out_projection->shape.points.point[vertex_index] = {cvPoint.x, cvPoint.y};
+            out_projection->projections[section].shape.points.point[vertex_index] = {cvPoint.x, cvPoint.y};
         }
 
-        out_projection->shape.points.point_count = imagePointCount;
-        out_projection->screen_area = projectionArea;
+        out_projection->projections[section].shape.points.point_count = imagePointCount;
+        out_projection->projections[section].screen_area = projectionArea;
     }
 
     return bValidTrackerPose;
@@ -2600,19 +2656,19 @@ static cv::Rect2i computeTrackerROIForPoseProjection(
         CommonDeviceScreenLocation projection_pixel_center;
         projection_pixel_center.clear();
 
-        switch (prior_tracking_projection->shape_type)
+        switch (prior_tracking_projection->projection_type)
         {
         case eCommonTrackingProjectionType::ProjectionType_Ellipse:
             {
                 // Use the center of the ellipsoid projection for the ROI area
-                projection_pixel_center = prior_tracking_projection->shape.ellipse.center;
+                projection_pixel_center = prior_tracking_projection->projections[section].shape.ellipse.center;
             } break;
 
         case eCommonTrackingProjectionType::ProjectionType_LightBar:
             {
                 // Use the center of the quad projection for the ROI area
-                const auto proj_tl = prior_tracking_projection->shape.lightbar.quad[CommonDeviceTrackingShape::QuadVertexUpperLeft];
-                const auto proj_br = prior_tracking_projection->shape.lightbar.quad[CommonDeviceTrackingShape::QuadVertexLowerRight];
+                const auto proj_tl = prior_tracking_projection->projections[section].shape.lightbar.quad[CommonDeviceTrackingShape::QuadVertexUpperLeft];
+                const auto proj_br = prior_tracking_projection->projections[section].shape.lightbar.quad[CommonDeviceTrackingShape::QuadVertexLowerRight];
 
                 projection_pixel_center.set(0.5f * (proj_tl.x + proj_br.x), 0.5f * (proj_tl.y + proj_br.y));
             } break;
@@ -2620,14 +2676,14 @@ static cv::Rect2i computeTrackerROIForPoseProjection(
         case eCommonTrackingProjectionType::ProjectionType_Points:
             {
                 // Compute the centroid of the projection pixels
-                for (int point_index = 0; point_index < prior_tracking_projection->shape.points.point_count; ++point_index)
+                for (int point_index = 0; point_index < prior_tracking_projection->projections[section].shape.points.point_count; ++point_index)
                 {
-                    const auto &pixel = prior_tracking_projection->shape.points.point[point_index];
+                    const auto &pixel = prior_tracking_projection->projections[section].shape.points.point[point_index];
 
                     projection_pixel_center.x += pixel.x;
                     projection_pixel_center.y += pixel.y;
                 }
-                const float N = static_cast<float>(prior_tracking_projection->shape.points.point_count);
+                const float N = static_cast<float>(prior_tracking_projection->projections[section].shape.points.point_count);
                 projection_pixel_center.x /= N;
                 projection_pixel_center.y /= N;
             } break;

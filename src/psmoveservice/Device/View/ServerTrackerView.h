@@ -87,7 +87,9 @@ public:
         const ITrackerInterface::eTrackerVideoSection section,
         const std::vector<CommonDevicePosition> &objectPositions) const;
     
-    CommonDeviceScreenLocation projectTrackerRelativePosition(const CommonDevicePosition *trackerRelativePosition) const;
+    CommonDeviceScreenLocation projectTrackerRelativePosition(
+        const ITrackerInterface::eTrackerVideoSection section,
+        const CommonDevicePosition *trackerRelativePosition) const;
     
     CommonDevicePosition computeWorldPosition(const CommonDevicePosition *tracker_relative_position) const;
     CommonDeviceQuaternion computeWorldOrientation(const CommonDeviceQuaternion *tracker_relative_orientation) const;

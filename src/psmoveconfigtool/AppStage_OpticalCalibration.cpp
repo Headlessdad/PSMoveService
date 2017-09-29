@@ -312,7 +312,7 @@ void AppStage_OpticalCalibration::update()
 			PSMTrackingProjection projection;
 			if (PSM_GetControllerProjectionOnTracker(m_controllerView->ControllerID, &trackerId, &projection) == PSMResult_Success)
 			{
-				m_lastProjectionArea+= PSM_TrackingProjectionGetArea(&projection);
+				m_lastProjectionArea+= PSM_TrackingProjectionGetArea(&projection, PRIMARY_PROJECTION_INDEX);
 				++projectionCount;
 			}
 

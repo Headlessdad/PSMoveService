@@ -110,7 +110,7 @@ struct TrackerRelativePoseStatistics
 		PSMVector3f trackerRelativePosition;
 		
 		if (!getIsComplete() &&
-			PSM_GetControllerPixelLocationOnTracker(controllerView->ControllerID, &streamTrackerID, &screenSample) == PSMResult_Success &&
+			PSM_GetControllerPixelLocationOnTracker(controllerView->ControllerID, PRIMARY_PROJECTION_INDEX, &streamTrackerID, &screenSample) == PSMResult_Success &&
 			PSM_GetControllerPositionOnTracker(controllerView->ControllerID, &streamTrackerID, &trackerRelativePosition) == PSMResult_Success &&
             streamTrackerID == sampleTrackerID)
 		{
@@ -151,7 +151,7 @@ struct TrackerRelativePoseStatistics
 		PSMVector3f trackerRelativePosition;
 		
 		if (!getIsComplete() &&
-			PSM_GetHmdPixelLocationOnTracker(hmdView->HmdID, &streamTrackerID, &screenSample) == PSMResult_Success &&
+			PSM_GetHmdPixelLocationOnTracker(hmdView->HmdID, PRIMARY_PROJECTION_INDEX, &streamTrackerID, &screenSample) == PSMResult_Success &&
 			PSM_GetHmdPositionOnTracker(hmdView->HmdID, &streamTrackerID, &trackerRelativePosition) == PSMResult_Success &&
             streamTrackerID == sampleTrackerID)
 		{

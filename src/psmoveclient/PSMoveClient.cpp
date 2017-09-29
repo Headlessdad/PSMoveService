@@ -1444,34 +1444,43 @@ static void applyPSMoveDataFrame(
 	{
 		const auto &raw_tracker_data = psmove_packet.raw_tracker_data();
 
-		const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_location();
 		const PSMoveProtocol::Position &positionOnTracker = raw_tracker_data.relative_position_cm();
 
 		psmove->RawTrackerData.TrackerID = raw_tracker_data.tracker_id();
-		psmove->RawTrackerData.ScreenLocation = { locationOnTracker.x(), locationOnTracker.y() };
 		psmove->RawTrackerData.RelativePositionCm = { positionOnTracker.x(), positionOnTracker.y(), positionOnTracker.z() };
 		psmove->RawTrackerData.RelativeOrientation = *k_psm_quaternion_identity;
 		psmove->RawTrackerData.ValidTrackerBitmask = raw_tracker_data.valid_tracker_bitmask();
 
-        if (raw_tracker_data.has_projected_sphere())
+        if (raw_tracker_data.projected_spheres_size() > 0)
 		{
-			const PSMoveProtocol::Ellipse &protocolEllipse = raw_tracker_data.projected_sphere();
-			PSMTrackingProjection &projection = psmove->RawTrackerData.TrackingProjection;
+            int projection_count= 
+                std::min(raw_tracker_data.projected_spheres_size(), static_cast<int>(MAX_PROJECTION_COUNT));
 
-			projection.shape.ellipse.center.x = protocolEllipse.center().x();
-			projection.shape.ellipse.center.y = protocolEllipse.center().y();
-			projection.shape.ellipse.half_x_extent = protocolEllipse.half_x_extent();
-			projection.shape.ellipse.half_y_extent = protocolEllipse.half_y_extent();
-			projection.shape.ellipse.angle = protocolEllipse.angle();
-			projection.shape_type = PSMTrackingProjection::PSMShape_Ellipse;
+            psmove->RawTrackerData.TrackingProjection.projection_count=
+                projection_count == 2 ? STEREO_PROJECTION_COUNT : MONO_PROJECTION_COUNT;
+                
+            for (int sphere_index = 0; sphere_index < projection_count; ++sphere_index)
+            {
+			    const PSMoveProtocol::Ellipse &protocolEllipse = raw_tracker_data.projected_spheres(sphere_index);
+			    PSMTrackingProjectionData &projection = psmove->RawTrackerData.TrackingProjection.projections[sphere_index];
+
+			    projection.shape.ellipse.center.x = protocolEllipse.center().x();
+			    projection.shape.ellipse.center.y = protocolEllipse.center().y();
+			    projection.shape.ellipse.half_x_extent = protocolEllipse.half_x_extent();
+			    projection.shape.ellipse.half_y_extent = protocolEllipse.half_y_extent();
+			    projection.shape.ellipse.angle = protocolEllipse.angle();
+                psmove->RawTrackerData.TrackingProjection.shape_type= PSMShape_Ellipse;
+
+                const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_locations(sphere_index);
+                psmove->RawTrackerData.ScreenLocations[sphere_index] = { locationOnTracker.x(), locationOnTracker.y() };
+            }
 		}
         else
 		{
 			PSMTrackingProjection &projection = psmove->RawTrackerData.TrackingProjection;
 
-			projection.shape_type = PSMTrackingProjection::PSMShape_INVALID_PROJECTION;
+			projection.shape_type = PSMShape_INVALID_PROJECTION;
 		}
-
 
 		if (raw_tracker_data.has_multicam_position_cm())
 		{
@@ -1627,45 +1636,56 @@ static void applyDualShock4DataFrame(
 	{
 		const auto &raw_tracker_data = ds4_packet.raw_tracker_data();
 
-		const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_location();
 		const PSMoveProtocol::Position &positionOnTracker = raw_tracker_data.relative_position_cm();
 		const PSMoveProtocol::Orientation &orientationOnTracker = raw_tracker_data.relative_orientation();
 
 		ds4->RawTrackerData.TrackerID = raw_tracker_data.tracker_id();
-		ds4->RawTrackerData.ScreenLocation = { locationOnTracker.x(), locationOnTracker.y() };
 		ds4->RawTrackerData.RelativePositionCm = { positionOnTracker.x(), positionOnTracker.y(), positionOnTracker.z() };
 		ds4->RawTrackerData.RelativeOrientation = 
 			PSM_QuatfCreate(orientationOnTracker.w(), orientationOnTracker.x(), orientationOnTracker.y(), orientationOnTracker.z());
         ds4->RawTrackerData.ValidTrackerBitmask = raw_tracker_data.valid_tracker_bitmask();
 
-		if (raw_tracker_data.has_projected_blob())
+		if (raw_tracker_data.projected_blobs_size() > 0)
 		{
-            const PSMoveProtocol::Polygon &protocolPolygon = raw_tracker_data.projected_blob();
-            PSMTrackingProjection &projection = ds4->RawTrackerData.TrackingProjection;
+            int projection_count= 
+                std::min(raw_tracker_data.projected_blobs_size(), static_cast<int>(MAX_PROJECTION_COUNT));
 
-            assert (protocolPolygon.vertices_size() == 7);
-            projection.shape_type = PSMTrackingProjection::PSMShape_LightBar;
+            ds4->RawTrackerData.TrackingProjection.projection_count=
+                projection_count == 2 ? STEREO_PROJECTION_COUNT : MONO_PROJECTION_COUNT;
 
-            for (int vert_index = 0; vert_index < 3; ++vert_index)
+            for (int projection_index = 0; projection_index < projection_count; ++projection_index)
             {
-                const PSMoveProtocol::Pixel &pixel = protocolPolygon.vertices(vert_index);
+                const PSMoveProtocol::Polygon &protocolPolygon = raw_tracker_data.projected_blobs(projection_index);
+                PSMTrackingProjectionData &projection = ds4->RawTrackerData.TrackingProjection.projections[projection_index];
 
-                projection.shape.lightbar.triangle[vert_index].x = pixel.x();
-                projection.shape.lightbar.triangle[vert_index].y = pixel.y();
-            }
-            for (int vert_index = 0; vert_index < 4; ++vert_index)
-            {
-                const PSMoveProtocol::Pixel &pixel = protocolPolygon.vertices(vert_index+3);
+                assert (protocolPolygon.vertices_size() == 7);
+                ds4->RawTrackerData.TrackingProjection.shape_type = PSMShape_LightBar;
 
-                projection.shape.lightbar.quad[vert_index].x = pixel.x();
-                projection.shape.lightbar.quad[vert_index].y = pixel.y();
+                for (int vert_index = 0; vert_index < 3; ++vert_index)
+                {
+                    const PSMoveProtocol::Pixel &pixel = protocolPolygon.vertices(vert_index);
+
+                    projection.shape.lightbar.triangle[vert_index].x = pixel.x();
+                    projection.shape.lightbar.triangle[vert_index].y = pixel.y();
+                }
+                for (int vert_index = 0; vert_index < 4; ++vert_index)
+                {
+                    const PSMoveProtocol::Pixel &pixel = protocolPolygon.vertices(vert_index+3);
+
+                    projection.shape.lightbar.quad[vert_index].x = pixel.x();
+                    projection.shape.lightbar.quad[vert_index].y = pixel.y();
+                }
+
+        		const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_locations(projection_index);
+                ds4->RawTrackerData.ScreenLocations[projection_index] = 
+                    { locationOnTracker.x(), locationOnTracker.y() };
             }
 		}
 		else
 		{
 			PSMTrackingProjection &projection = ds4->RawTrackerData.TrackingProjection;
 
-			projection.shape_type = PSMTrackingProjection::PSMShape_INVALID_PROJECTION;
+			projection.shape_type = PSMShape_INVALID_PROJECTION;
 		}
 
 		if (raw_tracker_data.has_multicam_position_cm())
@@ -1797,31 +1817,41 @@ static void applyVirtualControllerDataFrame(
 	{
 		const auto &raw_tracker_data = virtual_controller_packet.raw_tracker_data();
 
-		const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_location();
 		const PSMoveProtocol::Position &positionOnTracker = raw_tracker_data.relative_position_cm();
 
 		virtual_controller->RawTrackerData.TrackerID = raw_tracker_data.tracker_id();
-		virtual_controller->RawTrackerData.ScreenLocation = { locationOnTracker.x(), locationOnTracker.y() };
 		virtual_controller->RawTrackerData.RelativePositionCm = { positionOnTracker.x(), positionOnTracker.y(), positionOnTracker.z() };
         virtual_controller->RawTrackerData.ValidTrackerBitmask = raw_tracker_data.valid_tracker_bitmask();
 
-		if (raw_tracker_data.has_projected_sphere())
+        if (raw_tracker_data.projected_spheres_size() > 0)
 		{
-			const PSMoveProtocol::Ellipse &protocolEllipse = raw_tracker_data.projected_sphere();
-			PSMTrackingProjection &projection = virtual_controller->RawTrackerData.TrackingProjection;
+            int projection_count= 
+                std::min(raw_tracker_data.projected_spheres_size(), static_cast<int>(MAX_PROJECTION_COUNT));
 
-			projection.shape.ellipse.center.x = protocolEllipse.center().x();
-			projection.shape.ellipse.center.y = protocolEllipse.center().y();
-			projection.shape.ellipse.half_x_extent = protocolEllipse.half_x_extent();
-			projection.shape.ellipse.half_y_extent = protocolEllipse.half_y_extent();
-			projection.shape.ellipse.angle = protocolEllipse.angle();
-			projection.shape_type = PSMTrackingProjection::PSMShape_Ellipse;
+            virtual_controller->RawTrackerData.TrackingProjection.projection_count=
+                projection_count == 2 ? STEREO_PROJECTION_COUNT : MONO_PROJECTION_COUNT;
+                
+            for (int sphere_index = 0; sphere_index < projection_count; ++sphere_index)
+            {
+			    const PSMoveProtocol::Ellipse &protocolEllipse = raw_tracker_data.projected_spheres(sphere_index);
+			    PSMTrackingProjectionData &projection = virtual_controller->RawTrackerData.TrackingProjection.projections[sphere_index];
+
+			    projection.shape.ellipse.center.x = protocolEllipse.center().x();
+			    projection.shape.ellipse.center.y = protocolEllipse.center().y();
+			    projection.shape.ellipse.half_x_extent = protocolEllipse.half_x_extent();
+			    projection.shape.ellipse.half_y_extent = protocolEllipse.half_y_extent();
+			    projection.shape.ellipse.angle = protocolEllipse.angle();
+                virtual_controller->RawTrackerData.TrackingProjection.shape_type= PSMShape_Ellipse;
+
+                const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_locations(sphere_index);
+                virtual_controller->RawTrackerData.ScreenLocations[sphere_index] = { locationOnTracker.x(), locationOnTracker.y() };
+            }
 		}
-		else
+        else
 		{
 			PSMTrackingProjection &projection = virtual_controller->RawTrackerData.TrackingProjection;
 
-			projection.shape_type = PSMTrackingProjection::PSMShape_INVALID_PROJECTION;
+			projection.shape_type = PSMShape_INVALID_PROJECTION;
 		}
 
 		if (raw_tracker_data.has_multicam_position_cm())
@@ -2002,35 +2032,45 @@ static void applyMorpheusDataFrame(
 	{
 		const auto &raw_tracker_data = morpheus_data_frame.raw_tracker_data();
 
-		const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_location();
 		const PSMoveProtocol::Position &positionOnTrackerCm = raw_tracker_data.relative_position_cm();
 
 		morpheus->RawTrackerData.TrackerID = raw_tracker_data.tracker_id();
-		morpheus->RawTrackerData.ScreenLocation = {locationOnTracker.x(), locationOnTracker.y()};
 		morpheus->RawTrackerData.RelativePositionCm = 
 			{positionOnTrackerCm.x(), positionOnTrackerCm.y(), positionOnTrackerCm.z()};
         morpheus->RawTrackerData.ValidTrackerBitmask = raw_tracker_data.valid_tracker_bitmask();
 
-		if (raw_tracker_data.has_projected_point_cloud())
+		if (raw_tracker_data.projected_point_clouds_size() > 0)
 		{
-			const PSMoveProtocol::Polygon &protocolPointCloud = raw_tracker_data.projected_point_cloud();
-			PSMTrackingProjection &projection = morpheus->RawTrackerData.TrackingProjection;
+            int projection_count= 
+                std::min(raw_tracker_data.projected_point_clouds_size(), static_cast<int>(MAX_PROJECTION_COUNT));
 
-			projection.shape.pointcloud.point_count = std::min(protocolPointCloud.vertices_size(), 7);
-			for (int point_index = 0; point_index < projection.shape.pointcloud.point_count; ++point_index)
-			{
-				const PSMoveProtocol::Pixel &point= protocolPointCloud.vertices(point_index);
+            morpheus->RawTrackerData.TrackingProjection.projection_count=
+                projection_count == 2 ? STEREO_PROJECTION_COUNT : MONO_PROJECTION_COUNT;
 
-				projection.shape.pointcloud.points[point_index].x = point.x();
-				projection.shape.pointcloud.points[point_index].y = point.y();
-			}					
-			projection.shape_type = PSMTrackingProjection::PSMShape_PointCloud;
+            for (int polygon_index = 0; polygon_index < projection_count; ++polygon_index)
+            {
+			    const PSMoveProtocol::Polygon &protocolPointCloud = raw_tracker_data.projected_point_clouds(polygon_index);
+			    PSMTrackingProjectionData &projection = morpheus->RawTrackerData.TrackingProjection.projections[polygon_index];
+
+			    projection.shape.pointcloud.point_count = std::min(protocolPointCloud.vertices_size(), 7);
+			    for (int point_index = 0; point_index < projection.shape.pointcloud.point_count; ++point_index)
+			    {
+				    const PSMoveProtocol::Pixel &point= protocolPointCloud.vertices(point_index);
+
+				    projection.shape.pointcloud.points[point_index].x = point.x();
+				    projection.shape.pointcloud.points[point_index].y = point.y();
+			    }					
+			    morpheus->RawTrackerData.TrackingProjection.shape_type = PSMShape_PointCloud;
+
+                const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_locations(polygon_index);
+                morpheus->RawTrackerData.ScreenLocations[polygon_index] = { locationOnTracker.x(), locationOnTracker.y() };
+            }
 		}
 		else
 		{
 			PSMTrackingProjection &projection = morpheus->RawTrackerData.TrackingProjection;
 
-			projection.shape_type = PSMTrackingProjection::PSMShape_INVALID_PROJECTION;
+			projection.shape_type = PSMShape_INVALID_PROJECTION;
 		}
 	}
 	else
@@ -2087,32 +2127,35 @@ static void applyVirtualHMDDataFrame(
 	{
 		const auto &raw_tracker_data = virtual_hmd_data_frame.raw_tracker_data();
 
-		const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_location();
-		const PSMoveProtocol::Position &positionOnTrackerCm = raw_tracker_data.relative_position_cm();
-
-		virtualHMD->RawTrackerData.TrackerID = raw_tracker_data.tracker_id();
-		virtualHMD->RawTrackerData.ScreenLocation = {locationOnTracker.x(), locationOnTracker.y()};
-		virtualHMD->RawTrackerData.RelativePositionCm = 
-			{positionOnTrackerCm.x(), positionOnTrackerCm.y(), positionOnTrackerCm.z()};
-        virtualHMD->RawTrackerData.ValidTrackerBitmask = raw_tracker_data.valid_tracker_bitmask();
-
-		if (raw_tracker_data.has_projected_sphere())
+        if (raw_tracker_data.projected_spheres_size() > 0)
 		{
-			const PSMoveProtocol::Ellipse &protocolEllipse = raw_tracker_data.projected_sphere();
-			PSMTrackingProjection &projection = virtualHMD->RawTrackerData.TrackingProjection;
+            int projection_count= 
+                std::min(raw_tracker_data.projected_spheres_size(), static_cast<int>(MAX_PROJECTION_COUNT));
 
-			projection.shape.ellipse.center.x = protocolEllipse.center().x();
-			projection.shape.ellipse.center.y = protocolEllipse.center().y();
-			projection.shape.ellipse.half_x_extent = protocolEllipse.half_x_extent();
-			projection.shape.ellipse.half_y_extent = protocolEllipse.half_y_extent();
-			projection.shape.ellipse.angle = protocolEllipse.angle();
-			projection.shape_type = PSMTrackingProjection::PSMShape_Ellipse;
+            virtualHMD->RawTrackerData.TrackingProjection.projection_count=
+                projection_count == 2 ? STEREO_PROJECTION_COUNT : MONO_PROJECTION_COUNT;
+                
+            for (int sphere_index = 0; sphere_index < projection_count; ++sphere_index)
+            {
+			    const PSMoveProtocol::Ellipse &protocolEllipse = raw_tracker_data.projected_spheres(sphere_index);
+			    PSMTrackingProjectionData &projection = virtualHMD->RawTrackerData.TrackingProjection.projections[sphere_index];
+
+			    projection.shape.ellipse.center.x = protocolEllipse.center().x();
+			    projection.shape.ellipse.center.y = protocolEllipse.center().y();
+			    projection.shape.ellipse.half_x_extent = protocolEllipse.half_x_extent();
+			    projection.shape.ellipse.half_y_extent = protocolEllipse.half_y_extent();
+			    projection.shape.ellipse.angle = protocolEllipse.angle();
+                virtualHMD->RawTrackerData.TrackingProjection.shape_type= PSMShape_Ellipse;
+
+                const PSMoveProtocol::Pixel &locationOnTracker = raw_tracker_data.screen_locations(sphere_index);
+                virtualHMD->RawTrackerData.ScreenLocations[sphere_index] = { locationOnTracker.x(), locationOnTracker.y() };
+            }
 		}
-		else
+        else
 		{
 			PSMTrackingProjection &projection = virtualHMD->RawTrackerData.TrackingProjection;
 
-			projection.shape_type = PSMTrackingProjection::PSMShape_INVALID_PROJECTION;
+			projection.shape_type = PSMShape_INVALID_PROJECTION;
 		}
 	}
 	else

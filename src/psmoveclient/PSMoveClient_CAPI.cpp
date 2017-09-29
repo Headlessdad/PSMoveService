@@ -817,10 +817,11 @@ PSMResult PSM_GetIsControllerTracking(PSMControllerID controller_id, bool *out_i
     return result;
 }
 
-PSMResult PSM_GetControllerPixelLocationOnTracker(PSMControllerID controller_id, PSMTrackerID *outTrackerId, PSMVector2f *outLocation)
+PSMResult PSM_GetControllerPixelLocationOnTracker(PSMControllerID controller_id, PSMTrackingProjectionCount projection_index, PSMTrackerID *outTrackerId, PSMVector2f *outLocation)
 {
 	assert(outTrackerId);
 	assert(outLocation);
+    assert(projection_index >= 0 && projection_index < MAX_PROJECTION_COUNT);
 
     if (g_psm_client != nullptr && IS_VALID_CONTROLLER_INDEX(controller_id))
     {
@@ -843,7 +844,7 @@ PSMResult PSM_GetControllerPixelLocationOnTracker(PSMControllerID controller_id,
 		if (trackerData != nullptr)
 		{
             *outTrackerId = trackerData->TrackerID;
-			*outLocation = trackerData->ScreenLocation;
+			*outLocation = trackerData->ScreenLocations[projection_index];
 			return PSMResult_Success;
 		}
 	}
@@ -1517,7 +1518,7 @@ PSMResult PSM_GetIsHmdTracking(PSMHmdID hmd_id, bool *out_is_tracking)
     return result;
 }
 
-PSMResult PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackerID *outTrackerId, PSMVector2f *outLocation)
+PSMResult PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackingProjectionCount projection_index, PSMTrackerID *outTrackerId, PSMVector2f *outLocation)
 {
 	assert(outLocation);
     assert(outTrackerId);
@@ -1542,7 +1543,7 @@ PSMResult PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackerID *outTra
 		if (trackerData != nullptr)
 		{
             *outTrackerId = trackerData->TrackerID;
-			*outLocation = trackerData->ScreenLocation;
+			*outLocation = trackerData->ScreenLocations[projection_index];
 			return PSMResult_Success;
 		}
 	}

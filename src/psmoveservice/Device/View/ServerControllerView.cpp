@@ -1276,12 +1276,16 @@ static void generate_psmove_data_frame_for_stream(
                         {
                             const CommonDevicePosition &trackerRelativePosition = positionEstimate->position_cm;
                             const ServerTrackerViewPtr tracker_view = DeviceManager::getInstance()->getTrackerViewPtr(selectedTrackerId);
+                            const int projection_count= positionEstimate->projection.projection_count;
 
                             // Project the 3d camera position back onto the tracker screen
+                            for (int projection_index= 0; projection_index < projection_count; ++projection_index)
                             {
                                 const CommonDeviceScreenLocation trackerScreenLocation =
-                                    tracker_view->projectTrackerRelativePosition(&trackerRelativePosition);
-                                PSMoveProtocol::Pixel *pixel = raw_tracker_data->mutable_screen_location();
+                                    tracker_view->projectTrackerRelativePosition(
+                                        static_cast<ITrackerInterface::eTrackerVideoSection>(projection_index),
+                                        &trackerRelativePosition);
+                                PSMoveProtocol::Pixel *pixel = raw_tracker_data->add_screen_locations();
 
                                 pixel->set_x(trackerScreenLocation.x);
                                 pixel->set_y(trackerScreenLocation.y);
@@ -1297,12 +1301,13 @@ static void generate_psmove_data_frame_for_stream(
                             }
 
                             // Add the tracker relative projection shapes
+                            for (int projection_index= 0; projection_index < projection_count; ++projection_index)
                             {
-                                const CommonDeviceTrackingProjection &trackerRelativeProjection = 
-                                    positionEstimate->projection;
+                                const CommonTrackingProjectionData &trackerRelativeProjection = 
+                                    positionEstimate->projection.projections[projection_index];
 
-                                assert(trackerRelativeProjection.shape_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
-                                PSMoveProtocol::Ellipse *ellipse= raw_tracker_data->mutable_projected_sphere();
+                                assert(positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
+                                PSMoveProtocol::Ellipse *ellipse= raw_tracker_data->add_projected_spheres();
                                 
                                 ellipse->mutable_center()->set_x(trackerRelativeProjection.shape.ellipse.center.x);
                                 ellipse->mutable_center()->set_y(trackerRelativeProjection.shape.ellipse.center.y);
@@ -1543,12 +1548,14 @@ static void generate_psdualshock4_data_frame_for_stream(
                             }
 
                             // Add the tracker relative projection shapes
+                            const int projection_count= poseEstimate->projection.projection_count;
+                            for (int projection_index= 0; projection_index < projection_count; ++projection_index)
                             {
-                                const CommonDeviceTrackingProjection &trackerRelativeProjection =
-                                    poseEstimate->projection;
+                                const CommonTrackingProjectionData &trackerRelativeProjection =
+                                    poseEstimate->projection.projections[projection_index];
 
-                                assert(trackerRelativeProjection.shape_type == eCommonTrackingProjectionType::ProjectionType_LightBar);
-                                PSMoveProtocol::Polygon *polygon = raw_tracker_data->mutable_projected_blob();
+                                assert(poseEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_LightBar);
+                                PSMoveProtocol::Polygon *polygon = raw_tracker_data->add_projected_blobs();
 
                                 for (int vert_index = 0; vert_index < 3; ++vert_index)
                                 {
@@ -1577,7 +1584,7 @@ static void generate_psdualshock4_data_frame_for_stream(
                                 center_pixel.y /= 4.f;
 
                                 {
-                                    PSMoveProtocol::Pixel *pixel = raw_tracker_data->mutable_screen_location();
+                                    PSMoveProtocol::Pixel *pixel = raw_tracker_data->add_screen_locations();
 
                                     pixel->set_x(center_pixel.x);
                                     pixel->set_y(center_pixel.y);
@@ -1707,16 +1714,6 @@ static void generate_virtual_controller_data_frame_for_stream(
                         const CommonDevicePosition &trackerRelativePosition = positionEstimate->position_cm;
                         const ServerTrackerViewPtr tracker_view = DeviceManager::getInstance()->getTrackerViewPtr(trackerId);
 
-                        // Project the 3d camera position back onto the tracker screen
-                        {
-                            const CommonDeviceScreenLocation trackerScreenLocation =
-                                tracker_view->projectTrackerRelativePosition(&trackerRelativePosition);
-                            PSMoveProtocol::Pixel *pixel = raw_tracker_data->mutable_screen_location();
-
-                            pixel->set_x(trackerScreenLocation.x);
-                            pixel->set_y(trackerScreenLocation.y);
-                        }
-
                         // Add the tracker relative 3d position
                         {
                             PSMoveProtocol::Position *position_cm= raw_tracker_data->mutable_relative_position_cm();
@@ -1727,18 +1724,30 @@ static void generate_virtual_controller_data_frame_for_stream(
                         }
 
                         // Add the tracker relative projection shapes
+                        const int projection_count= positionEstimate->projection.projection_count;
+                        for (int projection_index= 0; projection_index < projection_count; ++projection_index)
                         {
-                            const CommonDeviceTrackingProjection &trackerRelativeProjection = 
-                                positionEstimate->projection;
+                            const CommonTrackingProjectionData &trackerRelativeProjection = 
+                                positionEstimate->projection.projections[projection_index];
 
-                            assert(trackerRelativeProjection.shape_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
-                            PSMoveProtocol::Ellipse *ellipse= raw_tracker_data->mutable_projected_sphere();
+                            assert(positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
+                            PSMoveProtocol::Ellipse *ellipse= raw_tracker_data->add_projected_spheres();
                                 
                             ellipse->mutable_center()->set_x(trackerRelativeProjection.shape.ellipse.center.x);
                             ellipse->mutable_center()->set_y(trackerRelativeProjection.shape.ellipse.center.y);
                             ellipse->set_half_x_extent(trackerRelativeProjection.shape.ellipse.half_x_extent);
                             ellipse->set_half_y_extent(trackerRelativeProjection.shape.ellipse.half_y_extent);
                             ellipse->set_angle(trackerRelativeProjection.shape.ellipse.angle);
+
+                            // Project the 3d camera position back onto the tracker screen
+                            const CommonDeviceScreenLocation trackerScreenLocation =
+                                tracker_view->projectTrackerRelativePosition(
+                                    static_cast<ITrackerInterface::eTrackerVideoSection>(projection_index),
+                                    &trackerRelativePosition);
+                            PSMoveProtocol::Pixel *pixel = raw_tracker_data->add_screen_locations();
+
+                            pixel->set_x(trackerScreenLocation.x);
+                            pixel->set_y(trackerScreenLocation.y);
                         }
 
                         raw_tracker_data->set_tracker_id(selectedTrackerId);
@@ -2010,7 +2019,7 @@ update_filters_for_psmove(
                     poseEstimation->position_cm.x,
                     poseEstimation->position_cm.y,
                     poseEstimation->position_cm.z);
-            sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.screen_area;
+            sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.projections[0].screen_area;
         }
         else
         {
@@ -2145,8 +2154,8 @@ update_filters_for_psdualshock4(
         if (poseEstimation->bCurrentlyTracking)
         {
             const float screen_area =
-                (poseEstimation->projection.screen_area > config->min_screen_projection_area)
-                ? poseEstimation->projection.screen_area : 0.f;
+                (poseEstimation->projection.projections[0].screen_area > config->min_screen_projection_area)
+                ? poseEstimation->projection.projections[0].screen_area : 0.f;
 
             sensorPacket.optical_position_cm =
             Eigen::Vector3f(
@@ -2260,7 +2269,8 @@ static void update_filters_for_virtual_controller(
 					poseEstimation->position_cm.x,
 					poseEstimation->position_cm.y,
 					poseEstimation->position_cm.z);
-			sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.screen_area;
+			sensorPacket.tracking_projection_area_px_sqr = 
+                poseEstimation->projection.projections[0].screen_area;
 		}
 		else
 		{
@@ -2300,7 +2310,12 @@ static void computeSpherePoseForControllerFromSingleTracker(
     multicam_pose_estimation->bCurrentlyTracking = true;
 
     // Copy over the screen projection area
-    multicam_pose_estimation->projection.screen_area = tracker_pose_estimation->projection.screen_area;
+    const int projection_count= tracker_pose_estimation->projection.projection_count;
+    for (int projection_index = 0; projection_index < projection_count; ++projection_index)
+    {
+        multicam_pose_estimation->projection.projections[projection_index].screen_area = 
+            tracker_pose_estimation->projection.projections[projection_index].screen_area;
+    }
 }
 
 static void computeLightBarPoseForControllerFromSingleTracker(
@@ -2340,7 +2355,12 @@ static void computeLightBarPoseForControllerFromSingleTracker(
         multicam_pose_estimation->bCurrentlyTracking = true;
         
         // Copy over the screen projection area
-        multicam_pose_estimation->projection.screen_area = tracker_pose_estimation->projection.screen_area;
+        const int projection_count= tracker_pose_estimation->projection.projection_count;
+        for (int projection_index = 0; projection_index < projection_count; ++projection_index)
+        {
+            multicam_pose_estimation->projection.projections[projection_index].screen_area = 
+                tracker_pose_estimation->projection.projections[projection_index].screen_area;
+        }
     }
     else
     {
@@ -2368,8 +2388,11 @@ static void computeSpherePoseForControllerFromMultipleTrackers(
         const ServerTrackerViewPtr tracker = tracker_manager->getTrackerViewPtr(tracker_id);
         const ControllerOpticalPoseEstimation &poseEstimate = tracker_pose_estimations[tracker_id];
 
-        position2d_list[list_index] = tracker->projectTrackerRelativePosition(&poseEstimate.position_cm);
-        screen_area_sum += poseEstimate.projection.screen_area;
+        position2d_list[list_index] = 
+            tracker->projectTrackerRelativePosition(
+                ITrackerInterface::PrimarySection,
+                &poseEstimate.position_cm);
+        screen_area_sum += poseEstimate.projection.projections[0].screen_area;
     }
 
     // Compute triangulations amongst all pairs of projections
@@ -2393,8 +2416,10 @@ static void computeSpherePoseForControllerFromMultipleTrackers(
                 if ((tracker->getTrackerPose().PositionCm.x > 0) == (other_tracker->getTrackerPose().PositionCm.x < 0) &&
                     (tracker->getTrackerPose().PositionCm.z > 0) == (other_tracker->getTrackerPose().PositionCm.z < 0))
                 {
-                    float screen_area = tracker_pose_estimations[tracker_id].projection.screen_area;
-                    float other_screen_area = tracker_pose_estimations[other_tracker_id].projection.screen_area;
+                    float screen_area = 
+                        tracker_pose_estimations[tracker_id].projection.projections[0].screen_area;
+                    float other_screen_area = 
+                        tracker_pose_estimations[other_tracker_id].projection.projections[0].screen_area;
 
                     biggest_prjection_id = screen_area > other_screen_area ? tracker_id : other_tracker_id;
 
@@ -2457,7 +2482,7 @@ static void computeSpherePoseForControllerFromMultipleTrackers(
 
     // Compute the average projection area.
     // This is proportional to our position tracking quality.
-    multicam_pose_estimation->projection.screen_area =
+    multicam_pose_estimation->projection.projections[0].screen_area =
         screen_area_sum / static_cast<float>(projections_found);
 }
 
@@ -2483,7 +2508,7 @@ static void computeLightBarPoseForControllerFromMultipleTrackers(
         const CommonDeviceTrackingProjection &projection = tracker_pose_estimations[list_index].projection;
         const ServerTrackerViewPtr tracker = tracker_manager->getTrackerViewPtr(tracker_id);
 
-        screen_area_sum += projection.screen_area;
+        screen_area_sum += projection.projections[0].screen_area;
 
         for (int other_list_index = list_index + 1; other_list_index < projections_found; ++other_list_index)
         {
@@ -2512,7 +2537,9 @@ static void computeLightBarPoseForControllerFromMultipleTrackers(
                     world_pose.Orientation.z);
 
             // Weight the quaternion base on how visible the controller is on each screen
-            orientation_weights[pair_count] = projection.screen_area + other_projection.screen_area;
+            orientation_weights[pair_count] = 
+                projection.projections[0].screen_area + 
+                other_projection.projections[0].screen_area;
 
             ++pair_count;
         }
@@ -2557,6 +2584,6 @@ static void computeLightBarPoseForControllerFromMultipleTrackers(
 
     // Compute the average projection area.
     // This is proportional to our position tracking quality.
-    multicam_pose_estimation->projection.screen_area =
+    multicam_pose_estimation->projection.projections[0].screen_area =
         screen_area_sum / static_cast<float>(projections_found);
 }

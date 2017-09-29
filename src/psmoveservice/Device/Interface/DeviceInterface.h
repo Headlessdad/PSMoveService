@@ -375,7 +375,7 @@ struct CommonDeviceTrackingShape
     eCommonTrackingShapeType shape_type;
 };
 
-struct CommonDeviceTrackingProjection
+struct CommonTrackingProjectionData
 {
 	enum eTrackingShapeConstants
 	{
@@ -404,13 +404,30 @@ struct CommonDeviceTrackingProjection
     } shape;
 
     float screen_area; // area in pixels^2
-    eCommonTrackingProjectionType shape_type;
     
     struct {
         CommonDeviceScreenLocation center_of_mass;
         CommonDeviceScreenLocation bounding_rect[4];
         float area;
     } basic;
+};
+
+struct CommonDeviceTrackingProjection
+{
+	enum eTrackingProjectionCount
+	{
+		LEFT_PROJECTION_INDEX = 0,
+        RIGHT_PROJECTION_INDEX = 1,
+
+        MONO_PROJECTION_COUNT = 1,
+        STEREO_PROJECTION_COUNT = 2,
+        MAX_PROJECTION_COUNT = 2,
+        PRIMARY_PROJECTION_INDEX = LEFT_PROJECTION_INDEX,
+	};
+
+    CommonTrackingProjectionData projections[MAX_PROJECTION_COUNT];
+    eTrackingProjectionCount projection_count;
+    eCommonTrackingProjectionType projection_type;
 };
 
 struct CommonDistortionCoefficients

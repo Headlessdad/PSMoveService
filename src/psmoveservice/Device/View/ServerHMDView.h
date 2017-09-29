@@ -36,7 +36,7 @@ struct HMDOpticalPoseEstimation
 		bOrientationValid = false;
 
 		memset(&projection, 0, sizeof(CommonDeviceTrackingProjection));
-		projection.shape_type = eCommonTrackingProjectionType::INVALID_PROJECTION;
+		projection.projection_type = eCommonTrackingProjectionType::INVALID_PROJECTION;
 	}
 };
 

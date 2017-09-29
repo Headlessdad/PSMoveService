@@ -104,16 +104,8 @@ typedef struct
 	float zFar; 			///< far place distance of frustum, in cm
 } PSMFrustum;
 
-/// The projection of a tracking shape onto the image plane of a tracker video feed
 typedef struct
 {
-    enum eShapeType
-    {
-        PSMShape_INVALID_PROJECTION = -1,
-        PSMShape_Ellipse,					///< The 2D projection of a sphere (think conic sectioc)
-        PSMShape_LightBar,					///< The 2D projection of a 3D quad (bounding shape of DS4 lightbar) 
-		PSMShape_PointCloud					///< The 2D projection of a 3D point cloud (morpheus tracking lights)
-    }                               shape_type;
     union{
         struct {
             PSMVector2f center;
@@ -129,8 +121,37 @@ typedef struct
 			PSMVector2f points[7];
 			int point_count;
 		} pointcloud;
-    }                               shape;
-    
+    } shape;
+} PSMTrackingProjectionData;
+
+typedef enum
+{
+    LEFT_PROJECTION_INDEX = 0,
+    RIGHT_PROJECTION_INDEX = 1,
+
+    MONO_PROJECTION_COUNT = 1,
+    STEREO_PROJECTION_COUNT = 2,
+
+    MAX_PROJECTION_COUNT = 2,
+    PRIMARY_PROJECTION_INDEX = LEFT_PROJECTION_INDEX,
+} PSMTrackingProjectionCount;
+
+
+typedef enum 
+{
+    PSMShape_INVALID_PROJECTION = -1,
+    PSMShape_Ellipse,					///< The 2D projection of a sphere (think conic section)
+    PSMShape_LightBar,					///< The 2D projection of a 3D quad (bounding shape of DS4 lightbar) 
+    PSMShape_PointCloud					///< The 2D projection of a 3D point cloud (Morpheus tracking lights)
+} PSMShapeType;
+
+
+/// The projection of a tracking shape onto the image plane of a mono or stereo tracker video feed
+typedef struct
+{
+    PSMTrackingProjectionData projections[MAX_PROJECTION_COUNT];
+    PSMTrackingProjectionCount projection_count;
+    PSMShapeType shape_type;
 } PSMTrackingProjection;
 
 // Interface
@@ -312,7 +333,7 @@ PSM_PUBLIC_FUNCTION(void) PSM_FrustumSetPose(PSMFrustum *frustum, const PSMPosef
 
 // PSMTrackingProjection
 /// Compute the area in pixels^2 of a tracking projection
-PSM_PUBLIC_FUNCTION(float) PSM_TrackingProjectionGetArea(const PSMTrackingProjection *proj);
+PSM_PUBLIC_FUNCTION(float) PSM_TrackingProjectionGetArea(const PSMTrackingProjection *proj, const PSMTrackingProjectionCount area_index);
 
 //-- constants -----
 /// A 3D integer vector whose components are all 0

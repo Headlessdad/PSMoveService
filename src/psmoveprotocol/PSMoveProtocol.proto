@@ -915,9 +915,9 @@ message DeviceOutputDataFrame
             message RawTrackerData
             {
                 int32 tracker_id= 1;
-                Pixel screen_location= 2;
+                repeated Pixel screen_locations= 2; // 1 for mono, 2 for stereo
                 Position relative_position_cm= 3;
-                Ellipse projected_sphere= 4;
+                repeated Ellipse projected_spheres= 4; // 1 for mono, 2 for stereo
                 Position multicam_position_cm= 5;
                 uint32 valid_tracker_bitmask = 6;
             }
@@ -998,11 +998,11 @@ message DeviceOutputDataFrame
             message RawTrackerData
             {
                 int32 tracker_id= 1;
-                Pixel screen_location= 2;
+                repeated Pixel screen_locations= 2; // 1 for mono, 2 for stereo
                 Position relative_position_cm= 3;
                 Orientation relative_orientation= 4;
-                Ellipse projected_sphere= 5;
-                Polygon projected_blob= 6;
+                repeated Ellipse projected_spheres= 5; // 1 for mono, 2 for stereo
+                repeated Polygon projected_blobs= 6; // 1 for mono, 2 for stereo
                 Position multicam_position_cm= 7;
                 Orientation multicam_orientation= 8;
                 uint32 valid_tracker_bitmask = 9;
@@ -1046,9 +1046,9 @@ message DeviceOutputDataFrame
             message RawTrackerData
             {
                 int32 tracker_id= 1;
-                Pixel screen_location= 2;
+                repeated Pixel screen_locations= 2; // 1 for mono, 2 for stereo
                 Position relative_position_cm= 3;
-                Ellipse projected_sphere= 4;
+                repeated Ellipse projected_spheres= 4; // 1 for mono, 2 for stereo
                 Position multicam_position_cm= 5;
                 uint32 valid_tracker_bitmask = 6;
             }
@@ -1135,10 +1135,10 @@ message DeviceOutputDataFrame
             message RawTrackerData
             {
                 int32 tracker_id= 1;
-                Pixel screen_location= 2;
+                repeated Pixel screen_locations= 2; // 1 for mono, 2 for stereo
                 Position relative_position_cm= 3;
                 Orientation relative_orientation= 4;
-                Polygon projected_point_cloud= 5;
+                repeated Polygon projected_point_clouds= 5; // 1 for mono, 2 for stereo
                 uint32 valid_tracker_bitmask = 6;
             }
             RawTrackerData raw_tracker_data = 9;
@@ -1170,9 +1170,9 @@ message DeviceOutputDataFrame
             message RawTrackerData
             {
                 int32 tracker_id= 1;
-                Pixel screen_location= 2;
+                repeated Pixel screen_locations= 2; // 1 for mono, 2 for stereo
                 Position relative_position_cm= 3;
-                Ellipse projected_sphere= 4;
+                repeated Ellipse projected_spheres= 4; // 1 for mono, 2 for stereo
                 uint32 valid_tracker_bitmask = 5;
             }
             RawTrackerData raw_tracker_data = 5;

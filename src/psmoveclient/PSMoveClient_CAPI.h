@@ -202,7 +202,7 @@ typedef struct
 	/// ID of the selected tracker
     PSMTrackerID            TrackerID;
 	/// Pixel position of device projection centroid on each tracker
-    PSMVector2f             ScreenLocation;
+    PSMVector2f             ScreenLocations[2];
 	/// Tracker relative device 3d position on each tracker
     PSMVector3f             RelativePositionCm;
 	/// Tracker relative device 3d orientation on each tracker
@@ -1080,12 +1080,13 @@ PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetIsControllerTracking(PSMControllerID contr
 	Each tracking camera sees a projection of a controllers tracking light. 
 	This method gets the pixel centroid of controller projection.
 	\param controller_id The controller id to get the tracking projection location
+    \param projection_index The index of the left of right projection for stereo trackers (0 for mono trackers)
 	\param tracker_id The tracker id of the tracker that has the controller projection we care about.
 	\param[out] out_tracker_id The id of the tracker this projection is for
 	\param[out] out_location The center pixel location of the controller projection on the tracker.
 	\return PSMResult_Success if controller has a valid projection on the tracker.
  */
-PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetControllerPixelLocationOnTracker(PSMControllerID controller_id, PSMTrackerID *out_tracker_id, PSMVector2f *out_location);
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetControllerPixelLocationOnTracker(PSMControllerID controller_id, PSMTrackingProjectionCount projection_index, PSMTrackerID *out_tracker_id, PSMVector2f *out_location);
 
 /** \brief Helper function for getting the tracker relative 3d position of the controller.
 	Each tracking camera can compute a estimate of the controllers 3d position relative to the tracker.
@@ -1483,11 +1484,12 @@ PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetIsHmdTracking(PSMHmdID hmd_id, bool *out_i
 	Each tracking camera sees a projection of an HMD's tracking light(s). 
 	This method gets the pixel centroid of the HMD projection.
 	\param hmd_id The hmd id to get the tracking projection location
+    \param projection_index The index of the left or right projection (for stereo trackers) or 0 for mono trackers
 	\param[out] out_tracker_id The id of the tracker this projection is for
 	\param[out] out_location The center pixel location of the HMD projection on the tracker.
 	\return PSMResult_Success if HMD has a valid projection on the tracker.
  */
-PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackerID *out_tracker_id, PSMVector2f *out_location);
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackingProjectionCount projection_index, PSMTrackerID *out_tracker_id, PSMVector2f *out_location);
 
 /** \brief Helper function for getting the tracker relative 3d position of the HMD.
 	Each tracking camera can compute a estimate of the HMD's 3d position relative to the tracker.

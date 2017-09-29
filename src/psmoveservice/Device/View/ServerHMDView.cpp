@@ -1005,7 +1005,7 @@ update_filters_for_morpheus_hmd(
 					poseEstimation->position_cm.x,
 					poseEstimation->position_cm.y,
 					poseEstimation->position_cm.z);
-			sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.screen_area;
+			sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.projections[0].screen_area;
 		}
 		else
 		{
@@ -1072,7 +1072,7 @@ update_filters_for_virtual_hmd(
 					poseEstimation->position_cm.x,
 					poseEstimation->position_cm.y,
 					poseEstimation->position_cm.z);
-			sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.screen_area;
+			sensorPacket.tracking_projection_area_px_sqr = poseEstimation->projection.projections[0].screen_area;
 		}
 		else
 		{
@@ -1221,16 +1221,6 @@ static void generate_morpheus_hmd_data_frame_for_stream(
 				        const CommonDevicePosition &trackerRelativePosition = positionEstimate->position_cm;
 				        const ServerTrackerViewPtr tracker_view = DeviceManager::getInstance()->getTrackerViewPtr(trackerId);
 
-				        // Project the 3d camera position back onto the tracker screen
-				        {
-					        const CommonDeviceScreenLocation trackerScreenLocation =
-						        tracker_view->projectTrackerRelativePosition(&trackerRelativePosition);
-					        PSMoveProtocol::Pixel *pixel = raw_tracker_data->mutable_screen_location();
-
-					        pixel->set_x(trackerScreenLocation.x);
-					        pixel->set_y(trackerScreenLocation.y);
-				        }
-
 				        // Add the tracker relative 3d position
 				        {
 					        PSMoveProtocol::Position *position = raw_tracker_data->mutable_relative_position_cm();
@@ -1241,12 +1231,14 @@ static void generate_morpheus_hmd_data_frame_for_stream(
 				        }
 
 				        // Add the tracker relative projection shapes
+                        const int projection_count= positionEstimate->projection.projection_count;
+                        for (int projection_index = 0; projection_index < projection_count; ++projection_index)
 				        {
-					        const CommonDeviceTrackingProjection &trackerRelativeProjection =
-						        positionEstimate->projection;
+					        const CommonTrackingProjectionData &trackerRelativeProjection =
+						        positionEstimate->projection.projections[projection_index];
 
-					        assert(trackerRelativeProjection.shape_type == eCommonTrackingProjectionType::ProjectionType_Points);
-					        PSMoveProtocol::Polygon *polygon = raw_tracker_data->mutable_projected_point_cloud();
+					        assert(positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Points);
+					        PSMoveProtocol::Polygon *polygon = raw_tracker_data->add_projected_point_clouds();
 
 					        for (int vert_index = 0; vert_index < trackerRelativeProjection.shape.points.point_count; ++vert_index)
 					        {
@@ -1255,6 +1247,16 @@ static void generate_morpheus_hmd_data_frame_for_stream(
 						        pixel->set_x(trackerRelativeProjection.shape.points.point[vert_index].x);
 						        pixel->set_y(trackerRelativeProjection.shape.points.point[vert_index].y);
 					        }
+
+				            // Project the 3d camera position back onto the tracker screen
+					        const CommonDeviceScreenLocation trackerScreenLocation =
+						        tracker_view->projectTrackerRelativePosition(
+                                    static_cast<ITrackerInterface::eTrackerVideoSection>(projection_index),
+                                    &trackerRelativePosition);
+					        PSMoveProtocol::Pixel *pixel = raw_tracker_data->add_screen_locations();
+
+					        pixel->set_x(trackerScreenLocation.x);
+					        pixel->set_y(trackerScreenLocation.y);
 				        }
 
 				        raw_tracker_data->set_tracker_id(trackerId);
@@ -1340,16 +1342,6 @@ static void generate_virtual_hmd_data_frame_for_stream(
 				        const CommonDevicePosition &trackerRelativePosition = positionEstimate->position_cm;
 				        const ServerTrackerViewPtr tracker_view = DeviceManager::getInstance()->getTrackerViewPtr(selectedTrackerId);
 
-				        // Project the 3d camera position back onto the tracker screen
-				        {
-					        const CommonDeviceScreenLocation trackerScreenLocation =
-						        tracker_view->projectTrackerRelativePosition(&trackerRelativePosition);
-					        PSMoveProtocol::Pixel *pixel = raw_tracker_data->mutable_screen_location();
-
-					        pixel->set_x(trackerScreenLocation.x);
-					        pixel->set_y(trackerScreenLocation.y);
-				        }
-
 				        // Add the tracker relative 3d position
 				        {
 					        PSMoveProtocol::Position *position = raw_tracker_data->mutable_relative_position_cm();
@@ -1360,18 +1352,30 @@ static void generate_virtual_hmd_data_frame_for_stream(
 				        }
 
 				        // Add the tracker relative projection shapes
+                        const int projection_count= positionEstimate->projection.projection_count;
+                        for (int projection_index = 0; projection_index < projection_count; ++projection_index)
 				        {
-					        const CommonDeviceTrackingProjection &trackerRelativeProjection =
-						        positionEstimate->projection;
+					        const CommonTrackingProjectionData &trackerRelativeProjection =
+						        positionEstimate->projection.projections[projection_index];
 
-					        assert(trackerRelativeProjection.shape_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
-					        PSMoveProtocol::Ellipse *ellipse = raw_tracker_data->mutable_projected_sphere();
+					        assert(positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
+					        PSMoveProtocol::Ellipse *ellipse = raw_tracker_data->add_projected_spheres();
 
                             ellipse->mutable_center()->set_x(trackerRelativeProjection.shape.ellipse.center.x);
                             ellipse->mutable_center()->set_y(trackerRelativeProjection.shape.ellipse.center.y);
                             ellipse->set_half_x_extent(trackerRelativeProjection.shape.ellipse.half_x_extent);
                             ellipse->set_half_y_extent(trackerRelativeProjection.shape.ellipse.half_y_extent);
                             ellipse->set_angle(trackerRelativeProjection.shape.ellipse.angle);
+
+				            // Project the 3d camera position back onto the tracker screen
+					        const CommonDeviceScreenLocation trackerScreenLocation =
+						        tracker_view->projectTrackerRelativePosition(
+                                    static_cast<ITrackerInterface::eTrackerVideoSection>(projection_index),
+                                    &trackerRelativePosition);
+					        PSMoveProtocol::Pixel *pixel = raw_tracker_data->add_screen_locations();
+
+					        pixel->set_x(trackerScreenLocation.x);
+					        pixel->set_y(trackerScreenLocation.y);
 				        }
 
 				        raw_tracker_data->set_tracker_id(selectedTrackerId);
@@ -1439,7 +1443,12 @@ static void computeSpherePoseForHmdFromSingleTracker(
     multicam_pose_estimation->bCurrentlyTracking = true;
 
     // Copy over the screen projection area
-    multicam_pose_estimation->projection.screen_area = tracker_pose_estimation->projection.screen_area;
+    const int projection_count= tracker_pose_estimation->projection.projection_count;
+    for (int projection_index = 0; projection_index < projection_count; ++projection_index)
+    {
+        multicam_pose_estimation->projection.projections[projection_index].screen_area = 
+            tracker_pose_estimation->projection.projections[projection_index].screen_area;
+    }
 }
 
 static void computePointCloudPoseForHmdFromSingleTracker(
@@ -1458,7 +1467,12 @@ static void computePointCloudPoseForHmdFromSingleTracker(
     multicam_pose_estimation->bCurrentlyTracking = true;
 
     // Copy over the screen projection area
-    multicam_pose_estimation->projection.screen_area = tracker_pose_estimation->projection.screen_area;
+    const int projection_count= tracker_pose_estimation->projection.projection_count;
+    for (int projection_index = 0; projection_index < projection_count; ++projection_index)
+    {
+        multicam_pose_estimation->projection.projections[projection_index].screen_area = 
+            tracker_pose_estimation->projection.projections[projection_index].screen_area;
+    }
 }
 
 static void computeSpherePoseForHmdFromMultipleTrackers(
@@ -1481,8 +1495,10 @@ static void computeSpherePoseForHmdFromMultipleTrackers(
         const ServerTrackerViewPtr tracker = tracker_manager->getTrackerViewPtr(tracker_id);
         const HMDOpticalPoseEstimation &poseEstimate = tracker_pose_estimations[tracker_id];
 
-        position2d_list[list_index] = tracker->projectTrackerRelativePosition(&poseEstimate.position_cm);
-        screen_area_sum += poseEstimate.projection.screen_area;
+        position2d_list[list_index] = tracker->projectTrackerRelativePosition(
+            ITrackerInterface::PrimarySection,
+            &poseEstimate.position_cm);
+        screen_area_sum += poseEstimate.projection.projections[0].screen_area;
     }
 
     // Compute triangulations amongst all pairs of projections
@@ -1506,8 +1522,8 @@ static void computeSpherePoseForHmdFromMultipleTrackers(
                 if ((tracker->getTrackerPose().PositionCm.x > 0) == (other_tracker->getTrackerPose().PositionCm.x < 0) &&
                     (tracker->getTrackerPose().PositionCm.z > 0) == (other_tracker->getTrackerPose().PositionCm.z < 0))
                 {
-                    float screen_area = tracker_pose_estimations[tracker_id].projection.screen_area;
-                    float other_screen_area = tracker_pose_estimations[other_tracker_id].projection.screen_area;
+                    float screen_area = tracker_pose_estimations[tracker_id].projection.projections[0].screen_area;
+                    float other_screen_area = tracker_pose_estimations[other_tracker_id].projection.projections[0].screen_area;
 
                     biggest_prjection_id = screen_area > other_screen_area ? tracker_id : other_tracker_id;
 
@@ -1569,7 +1585,7 @@ static void computeSpherePoseForHmdFromMultipleTrackers(
 
     // Compute the average projection area.
     // This is proportional to our position tracking quality.
-    multicam_pose_estimation->projection.screen_area =
+    multicam_pose_estimation->projection.projections[0].screen_area =
         screen_area_sum / static_cast<float>(projections_found);
 }
 
@@ -1593,8 +1609,10 @@ static void computePointCloudPoseForHmdFromMultipleTrackers(
         const ServerTrackerViewPtr tracker = tracker_manager->getTrackerViewPtr(tracker_id);
         const HMDOpticalPoseEstimation &poseEstimate = tracker_pose_estimations[tracker_id];
 
-        position2d_list[list_index] = tracker->projectTrackerRelativePosition(&poseEstimate.position_cm);
-        screen_area_sum += poseEstimate.projection.screen_area;
+        position2d_list[list_index] = tracker->projectTrackerRelativePosition(
+            ITrackerInterface::PrimarySection,
+            &poseEstimate.position_cm);
+        screen_area_sum += poseEstimate.projection.projections[0].screen_area;
     }
 
     // Compute triangulations amongst all pairs of projections
@@ -1618,8 +1636,8 @@ static void computePointCloudPoseForHmdFromMultipleTrackers(
                 if ((tracker->getTrackerPose().PositionCm.x > 0) == (other_tracker->getTrackerPose().PositionCm.x < 0) &&
                     (tracker->getTrackerPose().PositionCm.z > 0) == (other_tracker->getTrackerPose().PositionCm.z < 0))
                 {
-                    float screen_area = tracker_pose_estimations[tracker_id].projection.screen_area;
-                    float other_screen_area = tracker_pose_estimations[other_tracker_id].projection.screen_area;
+                    float screen_area = tracker_pose_estimations[tracker_id].projection.projections[0].screen_area;
+                    float other_screen_area = tracker_pose_estimations[other_tracker_id].projection.projections[0].screen_area;
 
                     biggest_prjection_id = screen_area > other_screen_area ? tracker_id : other_tracker_id;
 
@@ -1681,6 +1699,6 @@ static void computePointCloudPoseForHmdFromMultipleTrackers(
 
     // Compute the average projection area.
     // This is proportional to our position tracking quality.
-    multicam_pose_estimation->projection.screen_area =
+    multicam_pose_estimation->projection.projections[0].screen_area =
         screen_area_sum / static_cast<float>(projections_found);
 }

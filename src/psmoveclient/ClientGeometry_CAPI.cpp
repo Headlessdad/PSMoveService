@@ -522,20 +522,28 @@ void PSM_FrustumSetPose(PSMFrustum *frustum, const PSMPosef *pose)
 }
 
 // -- PSMoveTrackingProjection -- 
-float PSM_TrackingProjectionGetArea(const PSMTrackingProjection *proj)
+float PSM_TrackingProjectionGetArea(const PSMTrackingProjection *proj, const PSMTrackingProjectionCount area_index)
 {
 	float area = 0.f;
 
 	switch (proj->shape_type)
 	{
-	case PSMTrackingProjection::PSMShape_Ellipse:
+	case PSMShape_Ellipse:
 		{
-			area = k_real_pi*proj->shape.ellipse.half_x_extent*proj->shape.ellipse.half_y_extent;
+			area = k_real_pi
+                *proj->projections[area_index].shape.ellipse.half_x_extent
+                *proj->projections[area_index].shape.ellipse.half_y_extent;
 		} break;
-	case PSMTrackingProjection::PSMShape_LightBar:
+	case PSMShape_LightBar:
 		{
-			PSMVector2f edge1 = PSM_Vector2fSubtract(&proj->shape.lightbar.quad[0], &proj->shape.lightbar.quad[1]);
-			PSMVector2f edge2 = PSM_Vector2fSubtract(&proj->shape.lightbar.quad[0], &proj->shape.lightbar.quad[3]);
+			PSMVector2f edge1 = 
+                PSM_Vector2fSubtract(
+                    &proj->projections[area_index].shape.lightbar.quad[0],
+                    &proj->projections[area_index].shape.lightbar.quad[1]);
+			PSMVector2f edge2 = 
+                PSM_Vector2fSubtract(
+                    &proj->projections[area_index].shape.lightbar.quad[0],
+                    &proj->projections[area_index].shape.lightbar.quad[3]);
 
 			area = PSM_Vector2fLength(&edge1)*PSM_Vector2fLength(&edge2);
 		} break;
