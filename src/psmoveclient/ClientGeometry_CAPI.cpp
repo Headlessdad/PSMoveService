@@ -458,6 +458,39 @@ PSMVector3f PSM_Matrix3fBasisZ(const PSMMatrix3f *mat)
 	return {mat->m[2][0], mat->m[2][1], mat->m[2][2]};
 }
 
+// PSMMatrix4d Methods
+PSMMatrix4d PSM_Matrix4dCreate(const PSMVector4d *basis_x, const PSMVector4d *basis_y, const PSMVector4d *basis_z, const PSMVector4d *basis_w)
+{
+    PSMMatrix4d mat;
+
+    mat.m[0][0] = basis_x->x; mat.m[0][1] = basis_x->y; mat.m[0][2] = basis_x->z; mat.m[0][3] = basis_x->w;
+    mat.m[1][0] = basis_y->x; mat.m[1][1] = basis_y->y; mat.m[1][2] = basis_y->z; mat.m[1][3] = basis_y->w;
+    mat.m[2][0] = basis_z->x; mat.m[2][1] = basis_z->y; mat.m[2][2] = basis_z->z; mat.m[2][3] = basis_z->w;
+    mat.m[3][0] = basis_w->x; mat.m[3][1] = basis_w->y; mat.m[3][2] = basis_w->z; mat.m[3][3] = basis_w->w;
+
+    return mat;
+}
+
+PSMVector4d PSM_Matrix4dBasisX(const PSMMatrix4d *mat)
+{
+    return {mat->m[0][0], mat->m[0][1], mat->m[0][2], mat->m[0][3]};
+}
+
+PSMVector4d PSM_Matrix4dBasisY(const PSMMatrix4d *mat)
+{
+    return {mat->m[1][0], mat->m[1][1], mat->m[1][2], mat->m[1][3]};
+}
+
+PSMVector4d PSM_Matrix4dBasisZ(const PSMMatrix4d *mat)
+{
+    return {mat->m[2][0], mat->m[2][1], mat->m[2][2], mat->m[2][3]};
+}
+
+PSMVector4d PSM_Matrix4dBasisW(const PSMMatrix4d *mat)
+{
+    return {mat->m[3][0], mat->m[3][1], mat->m[3][2], mat->m[3][3]};
+}
+
 // PSMPosef
 PSMPosef PSM_PosefCreate(const PSMVector3f *position, const PSMQuatf *orientation)
 {

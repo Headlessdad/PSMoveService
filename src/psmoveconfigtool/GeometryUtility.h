@@ -55,6 +55,8 @@ Eigen::Vector3f psm_vector3f_to_eigen_vector3(const PSMVector3f &v);
 Eigen::Quaternionf psm_quatf_to_eigen_quaternionf(const PSMQuatf &q);
 Eigen::Matrix3f psm_matrix3f_to_eigen_matrix3(const PSMMatrix3f &m);
 Eigen::Matrix3f psm_matrix3d_to_eigen_matrix3f(const PSMMatrix3d &m);
+Eigen::Matrix4f psm_matrix4d_to_eigen_matrix4f(const PSMMatrix4d &m);
+Eigen::Matrix4d psm_matrix4d_to_eigen_matrix4d(const PSMMatrix4d &m);
 
 // Eigen types to GLM types
 glm::mat3 eigen_matrix3f_to_glm_mat3(const Eigen::Matrix3f &m);

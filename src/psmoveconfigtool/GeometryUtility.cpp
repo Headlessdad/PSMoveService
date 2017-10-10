@@ -310,6 +310,40 @@ Eigen::Matrix3f psm_matrix3d_to_eigen_matrix3f(const PSMMatrix3d &m)
 	return result;
 }
 
+Eigen::Matrix4f psm_matrix4d_to_eigen_matrix4f(const PSMMatrix4d &m)
+{
+	Eigen::Matrix4f result;
+
+    PSMVector4d basis_x= PSM_Matrix4dBasisX(&m);
+    PSMVector4d basis_y= PSM_Matrix4dBasisY(&m);
+    PSMVector4d basis_z= PSM_Matrix4dBasisZ(&m);
+    PSMVector4d basis_w= PSM_Matrix4dBasisW(&m);
+
+	result << (float)basis_x.x, (float)basis_x.y, (float)basis_x.z, (float)basis_x.w,
+		(float)basis_y.x, (float)basis_y.y, (float)basis_y.z, (float)basis_y.w,
+		(float)basis_z.x, (float)basis_z.y, (float)basis_z.z, (float)basis_z.w,
+        (float)basis_w.x, (float)basis_w.y, (float)basis_w.z, (float)basis_w.w;
+
+	return result;
+}
+
+Eigen::Matrix4d psm_matrix4d_to_eigen_matrix4d(const PSMMatrix4d &m)
+{
+    Eigen::Matrix4d result;
+
+    PSMVector4d basis_x= PSM_Matrix4dBasisX(&m);
+    PSMVector4d basis_y= PSM_Matrix4dBasisY(&m);
+    PSMVector4d basis_z= PSM_Matrix4dBasisZ(&m);
+    PSMVector4d basis_w= PSM_Matrix4dBasisW(&m);
+
+    result << basis_x.x, basis_x.y, basis_x.z, basis_x.w,
+        basis_y.x, basis_y.y, basis_y.z, basis_y.w,
+        basis_z.x, basis_z.y, basis_z.z, basis_z.w,
+        basis_w.x, basis_w.y, basis_w.z, basis_w.w;
+
+    return result;
+}
+
 // Eigen types to GLM types
 glm::mat3 eigen_matrix3f_to_glm_mat3(const Eigen::Matrix3f &m)
 {

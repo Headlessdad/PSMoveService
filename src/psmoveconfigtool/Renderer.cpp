@@ -376,6 +376,21 @@ void Renderer::renderEnd()
 }
 
 //-- Drawing Methods -----
+inline glm::vec3 remapPointIntoSubWindow(
+    const float screenWidth, const float screenHeight,
+    const float windowLeft, const float windowTop,
+    const float windowRight, const float windowBottom,
+    const glm::vec3 &in_point)
+{
+    const float u= in_point.x / screenWidth;
+    const float v= in_point.y / screenHeight;
+
+    return glm::vec3(
+        (1.f-u)*windowLeft + u*windowRight,
+        (1.f-v)*windowTop + v*windowBottom,
+        in_point.z);
+}
+
 void drawArrow(
     const glm::mat4 &transform,
     const glm::vec3 &start, 
@@ -620,12 +635,26 @@ void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsig
 
 
 void drawPointCloudProjection(
-	const PSMVector2f *points,
-	const int point_count, 
-	const float point_size,
-	const glm::vec3 &color,
-	const float trackerWidth, 
-	const float trackerHeight)
+    const float trackerWidth, const float trackerHeight,
+    const float windowX0, const float windowY0,
+    const float windowX1, const float windowY1,
+    const glm::vec3 &color,
+    const PSMVector2f *points, const int point_count, const float point_size)
+{
+    drawPointCloudProjectionInSubWindow(
+        trackerWidth, trackerHeight,
+        0.f, 0.f,
+        trackerWidth-1.f, trackerHeight-1.f,
+        color,
+        points, point_count, point_size);
+}
+
+void drawPointCloudProjectionInSubWindow(
+    const float trackerWidth, const float trackerHeight,
+    const float windowX0, const float windowY0,
+    const float windowX1, const float windowY1,
+    const glm::vec3 &color,
+    const PSMVector2f *points, const int point_count, const float point_size)
 {
 	assert(Renderer::getIsRenderingStage());
 
@@ -649,14 +678,21 @@ void drawPointCloudProjection(
 	for (int point_index = 0; point_index < point_count; ++point_index)
 	{
 		const PSMVector2f *point = &points[point_index];
+        const glm::vec3 vertex(point->x, point->y, 0.5f);
+        const glm::vec3 remappedVertex=
+            remapPointIntoSubWindow(
+                trackerWidth, trackerHeight,
+                windowX0, windowY0,
+                windowX1, windowY1,
+                vertex);
 
 		glLineWidth(2.f);
 		glBegin(GL_LINES);
 		glColor3fv(glm::value_ptr(color));
-		glVertex3f(point->x - point_size, point->y, 0.5f);
-		glVertex3f(point->x + point_size, point->y, 0.5f);
-		glVertex3f(point->x, point->y + point_size, 0.5f);
-		glVertex3f(point->x, point->y - point_size, 0.5f);
+		glVertex3f(remappedVertex.x - point_size, remappedVertex.y, remappedVertex.z);
+		glVertex3f(remappedVertex.x + point_size, remappedVertex.y, remappedVertex.z);
+		glVertex3f(remappedVertex.x, remappedVertex.y + point_size, remappedVertex.z);
+		glVertex3f(remappedVertex.x, remappedVertex.y - point_size, remappedVertex.z);
 		glEnd();
 	}
 	glLineWidth(1.f);
@@ -944,21 +980,6 @@ void drawLineStrip(const glm::mat4 &transform, const glm::vec3 &color, const flo
         }
         glEnd();
     glPopMatrix();
-}
-
-inline glm::vec3 remapPointIntoSubWindow(
-    const float screenWidth, const float screenHeight,
-    const float windowLeft, const float windowTop,
-    const float windowRight, const float windowBottom,
-    const glm::vec3 &in_point)
-{
-    const float u= in_point.x / screenWidth;
-    const float v= in_point.y / screenHeight;
-
-    return glm::vec3(
-        (1.f-u)*windowLeft + u*windowRight,
-        (1.f-v)*windowTop + v*windowBottom,
-        in_point.z);
 }
 
 void drawQuadList2d(

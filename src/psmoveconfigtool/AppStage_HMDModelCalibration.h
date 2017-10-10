@@ -62,11 +62,6 @@ protected:
 
 	void update_tracker_video();
 	void render_tracker_video();
-	void go_next_tracker();
-	void go_previous_tracker();
-	int get_tracker_count() const;
-	int get_render_tracker_index() const;
-	PSMTracker *get_render_tracker_view() const;
 
 	void request_hmd_list();
 	static void handle_hmd_list_response(
@@ -82,7 +77,7 @@ protected:
 	static void handle_tracker_list_response(
 		const PSMResponseMessage *response_message,
 		void *userdata);
-	bool setup_tracker_pair(const PSMTrackerList &tracker_list);
+	bool setup_stereo_tracker(const PSMTrackerList &tracker_list);
 
 	void request_tracker_start_stream(PSMTracker *tracker_view);
 	static void handle_tracker_start_stream_response(
@@ -100,7 +95,7 @@ private:
 	eMenuState m_menuState;
 	bool m_bBypassCalibration;
 
-	struct TrackerPairState *m_trackerPairState;
+	struct StereoCameraState *m_stereoTrackerState;
 	class HMDModelState *m_hmdModelState;
 
 	PSMHeadMountedDisplay *m_hmdView;

@@ -46,6 +46,12 @@ typedef struct
     int x, y, z;
 } PSMVector3i;
 
+/// A 4D vector with double components.
+typedef struct
+{
+    double x, y, z, w;
+} PSMVector4d;
+
 /** A 3x3 matrix with float components
 	storage is row major order: [x0,x1,x2,y0,y1,y1,z0,z1,z2]
  */
@@ -314,6 +320,18 @@ PSM_PUBLIC_FUNCTION(PSMVector3f) PSM_Matrix3fBasisX(const PSMMatrix3f *m);
 PSM_PUBLIC_FUNCTION(PSMVector3f) PSM_Matrix3fBasisY(const PSMMatrix3f *m);
 /// Extract the z-axis basis vector from a 3x3 matrix
 PSM_PUBLIC_FUNCTION(PSMVector3f) PSM_Matrix3fBasisZ(const PSMMatrix3f *m);
+
+// PSMMatrix4d Methods
+/// Create a 4x4 matrix from a set of 4 basis vectors (might not be ortho-normal)
+PSM_PUBLIC_FUNCTION(PSMMatrix4d) PSM_Matrix4dCreate(const PSMVector4d *basis_x, const PSMVector4d *basis_y, const PSMVector4d *basis_z, const PSMVector4d *basis_w);
+/// Extract the x-axis basis vector from a 4x4 matrix
+PSM_PUBLIC_FUNCTION(PSMVector4d) PSM_Matrix4dBasisX(const PSMMatrix4d *m);
+/// Extract the y-axis basis vector from a 4x4 matrix
+PSM_PUBLIC_FUNCTION(PSMVector4d) PSM_Matrix4dBasisY(const PSMMatrix4d *m);
+/// Extract the z-axis basis vector from a 4x4 matrix
+PSM_PUBLIC_FUNCTION(PSMVector4d) PSM_Matrix4dBasisZ(const PSMMatrix4d *m);
+/// Extract the w-axis basis vector from a 4x4 matrix
+PSM_PUBLIC_FUNCTION(PSMVector4d) PSM_Matrix4dBasisW(const PSMMatrix4d *m);
 
 // PSMPosef
 /// Create a pose from a given position and orientation

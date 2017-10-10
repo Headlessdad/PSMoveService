@@ -20,7 +20,7 @@
 #include "SDL_keycode.h"
 #include "SDL_opengl.h"
 
-#include "ICP.h"
+//#include "ICP.h"
 
 #include "PSMoveClient_CAPI.h"
 
@@ -53,42 +53,27 @@ static const glm::vec3 k_psmove_frustum_color = glm::vec3(0.1f, 0.7f, 0.3f);
 static const glm::vec3 k_psmove_frustum_color_no_track = glm::vec3(1.0f, 0.f, 0.f);
 
 //-- private methods -----
-static glm::mat4 computeGLMCameraTransformMatrix(const PSMTracker *tracker_view);
-static cv::Matx34f computeOpenCVCameraExtrinsicMatrix(const PSMTracker *tracker_view);
-static cv::Matx33f computeOpenCVCameraIntrinsicMatrix(const PSMTracker *tracker_view);
-static cv::Matx34f computeOpenCVCameraPinholeMatrix(const PSMTracker *tracker_view);
-static bool triangulateHMDProjections(PSMHeadMountedDisplay *hmd_view, TrackerPairState *tracker_pair_state, std::vector<Eigen::Vector3f> &out_triangulated_points);
-static PSMVector2f projectWorldPositionOnTracker(const PSMVector3f &worldSpacePosition, const PSMTracker *trackerView);
+static bool triangulateHMDProjections(PSMHeadMountedDisplay *hmd_view, StereoCameraState *tracker_pair_state, std::vector<Eigen::Vector3f> &out_triangulated_points);
+static PSMVector2f projectTrackerRelativePositionOnTracker(
+    const PSMVector3f &trackerRelativePosition,
+    const PSMMatrix3d &camera_matrix,
+    const PSMDistortionCoefficients &distortion_coefficients);
 static void drawHMD(PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform);
 
 //-- private structures -----
-struct TrackerState
+struct StereoCameraState
 {
 	PSMTracker *trackerView;
-	class TextureAsset *textureAsset;
-};
+	class TextureAsset *leftTextureAsset;
+    class TextureAsset *rightTextureAsset;
 
-struct TrackerPairState
-{
-	union
-	{
-		TrackerState list[2];
-		struct
-		{
-			TrackerState a;
-			TrackerState b;
-		} pair;
-	} trackers;
-
-	int pendingTrackerStartCount;
-	int renderTrackerIndex;
-
-	Eigen::Matrix3f F_ab; // Fundamental matrix from tracker A to tracker B
+	Eigen::Matrix3f F_ab; // Fundamental matrix from left to right tracker frame
+    Eigen::Matrix4d Q; // Reprojection matrix
 	float tolerance;
 
 	void init()
 	{
-		memset(this, 0, sizeof(TrackerPairState));
+		memset(this, 0, sizeof(StereoCameraState));
 		tolerance = k_default_correspondance_tolerance;
 	}
 
@@ -192,10 +177,12 @@ public:
 		return fraction;
 	}
 
-	void recordSamples(PSMHeadMountedDisplay *hmd_view, TrackerPairState *tracker_pair_state)
+	void recordSamples(PSMHeadMountedDisplay *hmd_view, StereoCameraState *stereo_camera_state)
 	{
-		if (triangulateHMDProjections(hmd_view, tracker_pair_state, m_lastTriangulatedPoints))
+		if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastTriangulatedPoints))
 		{
+            // TODO
+            #if 0
 			const int source_point_count = static_cast<int>(m_lastTriangulatedPoints.size());
 
 			if (source_point_count >= 3)
@@ -261,6 +248,7 @@ public:
 					rebuildTargetVertices();
 				}
 			}
+            #endif
 
 			//TODO:
 			/*
@@ -272,20 +260,57 @@ public:
 
 	void render(const PSMTracker *trackerView) const
 	{
-		PSMVector2f projections[k_max_projection_points];
+		PSMVector2f tracker_size;
+        PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &tracker_size);
+
+        PSMTrackerIntrinsics intrinsics;
+        PSM_GetTrackerIntrinsics(trackerView->tracker_info.tracker_id, &intrinsics);
+        assert(intrinsics.intrinsics_type == PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS);
+        const PSMStereoTrackerIntrinsics &stereo_intrinsics= intrinsics.intrinsics.stereo;
+
+        const float midX= 0.5f*tracker_size.x;
+        const float rightX= tracker_size.x-1.f;
+        const float topY= 0.25f*(tracker_size.y-1.f);
+        const float bottomY= 0.75f*(tracker_size.y-1.f);
+
+        const float leftX0= 0.f, leftY0= topY;
+        const float leftX1= midX, leftY1= bottomY;
+
+        const float rightX0= midX, rightY0= topY;
+        const float rightX1= rightX, rightY1= bottomY;
+
+		PSMVector2f left_projections[k_max_projection_points];
+        PSMVector2f right_projections[k_max_projection_points];
 		int point_count = static_cast<int>(m_lastTriangulatedPoints.size());
 
 		for (int point_index = 0; point_index < point_count; ++point_index)
 		{
 			PSMVector3f worldPosition= eigen_vector3f_to_psm_vector3f(m_lastTriangulatedPoints[point_index]);
 
-			projections[point_index] = projectWorldPositionOnTracker(worldPosition, trackerView);
+			left_projections[point_index] = 
+                projectTrackerRelativePositionOnTracker(
+                    worldPosition, 
+                    stereo_intrinsics.left_camera_matrix,
+                    stereo_intrinsics.left_distortion_coefficients);
+            right_projections[point_index] = 
+                projectTrackerRelativePositionOnTracker(
+                    worldPosition, 
+                    stereo_intrinsics.right_camera_matrix,
+                    stereo_intrinsics.right_distortion_coefficients);
 		}
 
-		PSMVector2f tracker_size;
-        PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &tracker_size);
-
-		drawPointCloudProjection(projections, point_count, 6.f, glm::vec3(0.f, 1.f, 0.f), tracker_size.x, tracker_size.y);
+		drawPointCloudProjectionInSubWindow(
+            tracker_size.x, tracker_size.y, 
+            leftX0, leftY0,
+            leftX1, leftY1,
+            glm::vec3(0.f, 1.f, 0.f), 
+            left_projections, point_count, 6.f);
+		drawPointCloudProjectionInSubWindow(
+            tracker_size.x, tracker_size.y, 
+            rightX0, rightY0,
+            rightX1, rightY1,
+            glm::vec3(0.f, 1.f, 0.f), 
+            right_projections, point_count, 6.f);
 	}
 
 protected:
@@ -350,16 +375,16 @@ AppStage_HMDModelCalibration::AppStage_HMDModelCalibration(App *app)
 	: AppStage(app)
 	, m_menuState(AppStage_HMDModelCalibration::inactive)
     , m_bBypassCalibration(false)
-	, m_trackerPairState(new TrackerPairState)
+	, m_stereoTrackerState(new StereoCameraState)
 	, m_hmdModelState(nullptr)
 	, m_hmdView(nullptr)
 {
-	m_trackerPairState->init();
+	m_stereoTrackerState->init();
 }
 
 AppStage_HMDModelCalibration::~AppStage_HMDModelCalibration()
 {
-	delete m_trackerPairState;
+	delete m_stereoTrackerState;
 
 	if (m_hmdModelState != nullptr)
 	{
@@ -424,7 +449,7 @@ void AppStage_HMDModelCalibration::update()
 
 		if (!m_hmdModelState->getIsComplete())
 		{
-			m_hmdModelState->recordSamples(m_hmdView, m_trackerPairState);
+			m_hmdModelState->recordSamples(m_hmdView, m_stereoTrackerState);
 			if (m_hmdModelState->getIsComplete())
 			{
 				setState(eMenuState::test);
@@ -467,7 +492,7 @@ void AppStage_HMDModelCalibration::render()
 		} break;
 	case eMenuState::calibrate:
 		{
-			const PSMTracker *TrackerView = get_render_tracker_view();
+			const PSMTracker *TrackerView = m_stereoTrackerState->trackerView;
 
 			// Draw the video from the PoV of the current tracker
 			render_tracker_video();
@@ -484,9 +509,9 @@ void AppStage_HMDModelCalibration::render()
 			// Draw the frustum for each tracking camera.
 			// The frustums are defined in PSMove tracking space.
 			// We need to transform them into chaperone space to display them along side the HMD.
-			for (int tracker_index = 0; tracker_index < get_tracker_count(); ++tracker_index)
+			if (m_stereoTrackerState != nullptr)
 			{
-				const PSMTracker *trackerView = m_trackerPairState->trackers.list[tracker_index].trackerView;
+				const PSMTracker *trackerView = m_stereoTrackerState->trackerView;
 				const PSMPosef psmove_space_pose = trackerView->tracker_info.tracker_pose;
 				const glm::mat4 chaperoneSpaceTransform = psm_posef_to_glm_mat4(psmove_space_pose);
 
@@ -499,15 +524,13 @@ void AppStage_HMDModelCalibration::render()
 					bool bIsTracking;
 					if (PSM_GetIsHmdTracking(m_hmdView->HmdID, &bIsTracking) == PSMResult_Success)
 					{
-						PSMVector2f screenSample;
-
-#if 0
-						if (bIsTracking && PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, trackerView->tracker_info.tracker_id, &screenSample) == PSMResult_Success)
+						if (bIsTracking && 
+                            PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, LEFT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success &&
+                            PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, RIGHT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success)
 						{
 							color = k_psmove_frustum_color;
 						}
 						else
-#endif
 						{
 							color = k_psmove_frustum_color_no_track;
 						}
@@ -622,23 +645,11 @@ void AppStage_HMDModelCalibration::renderUI()
 	case eMenuState::verifyTrackers:
 	{
 		ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x / 2.f - 500.f / 2.f, 20.f));
-		ImGui::SetNextWindowSize(ImVec2(500.f, (get_tracker_count() > 0) ? 150.f : 100.f));
+		ImGui::SetNextWindowSize(ImVec2(500.f, 100.f));
 		ImGui::Begin(k_window_title, nullptr, window_flags);
 
-		ImGui::Text("Verify that your tracking cameras can see your HMD");
+		ImGui::Text("Verify that your stereo camera can see your HMD");
 		ImGui::Separator();
-
-		ImGui::Text("Tracker #%d", m_trackerPairState->renderTrackerIndex + 1);
-
-		if (ImGui::Button("Previous Tracker"))
-		{
-			go_previous_tracker();
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Next Tracker"))
-		{
-			go_next_tracker();
-		}
 
 		if (ImGui::Button("Looks Good!"))
 		{
@@ -659,52 +670,35 @@ void AppStage_HMDModelCalibration::renderUI()
 		ImGui::SetNextWindowSize(ImVec2(k_panel_width, 180));
 		ImGui::Begin(k_window_title, nullptr, window_flags);
 
-		ImGui::Text("Tracker #%d", m_trackerPairState->renderTrackerIndex + 1);
-
-		if (ImGui::Button("Previous Tracker"))
-		{
-			go_previous_tracker();
-		}
-		ImGui::SameLine();
-		if (ImGui::Button("Next Tracker"))
-		{
-			go_next_tracker();
-		}
-
-		ImGui::Separator();
-
 		// TODO: Show calibration progress
 		ImGui::ProgressBar(m_hmdModelState->getProgressFraction(), ImVec2(250, 20));
 
 		// display tracking quality
-		for (int tracker_index = 0; tracker_index < get_tracker_count(); ++tracker_index)
+		if (m_stereoTrackerState != nullptr)
 		{
-			const PSMTracker *trackerView = m_trackerPairState->trackers.list[tracker_index].trackerView;
-			const int tracker_id= trackerView->tracker_info.tracker_id;
+			const PSMTracker *trackerView = m_stereoTrackerState->trackerView;
 
 			bool bIsTracking;
 			if (PSM_GetIsHmdTracking(m_hmdView->HmdID, &bIsTracking) == PSMResult_Success)
 			{
-				PSMVector2f screenSample;
-
-#if 0
-				if (bIsTracking && PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, tracker_id, &screenSample) == PSMResult_Success)
+				if (bIsTracking && 
+                    PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, LEFT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success &&
+                    PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, RIGHT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success)
 				{
-					ImGui::Text("Tracking %d: OK", tracker_id + 1);
+					ImGui::Text("Tracking OK");
 				}
 				else
-#endif
 				{
-					ImGui::Text("Tracking %d: FAIL", tracker_id + 1);
+					ImGui::Text("Tracking FAIL");
 				}
 			}
 			else
 			{
-				ImGui::Text("Tracking %d: FAIL", tracker_id + 1);
+				ImGui::Text("Tracking FAIL");
 			}
 		}
 
-		ImGui::SliderFloat("Tolerance", &m_trackerPairState->tolerance, 0.f, 1.f);
+		ImGui::SliderFloat("Tolerance", &m_stereoTrackerState->tolerance, 0.f, 1.f);
 
 		ImGui::Separator();
 
@@ -743,30 +737,27 @@ void AppStage_HMDModelCalibration::renderUI()
 		}
 
 		// display tracking quality
-		for (int tracker_index = 0; tracker_index < get_tracker_count(); ++tracker_index)
+		if (m_stereoTrackerState != nullptr)
 		{
-			const PSMTracker *trackerView = m_trackerPairState->trackers.list[tracker_index].trackerView;
-			const int tracker_id= trackerView->tracker_info.tracker_id;
+			const PSMTracker *trackerView = m_stereoTrackerState->trackerView;
 
 			bool bIsTracking;
 			if (PSM_GetIsHmdTracking(m_hmdView->HmdID, &bIsTracking) == PSMResult_Success)
 			{
-				PSMVector2f screenSample;
-
-#if 0
-				if (bIsTracking && PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, tracker_id, &screenSample) == PSMResult_Success)
+				if (bIsTracking && 
+                    PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, LEFT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success &&
+                    PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, RIGHT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success)
 				{
-					ImGui::Text("Tracking %d: OK", tracker_id + 1);
+					ImGui::Text("Tracking OK");
 				}
 				else
-#endif
 				{
-					ImGui::Text("Tracking %d: FAIL", tracker_id + 1);
+					ImGui::Text("Tracking FAIL");
 				}
 			}
 			else
 			{
-				ImGui::Text("Tracking %d: FAIL", tracker_id + 1);
+				ImGui::Text("Tracking FAIL");
 			}
 		}
 		ImGui::Text("");
@@ -828,7 +819,7 @@ void AppStage_HMDModelCalibration::onEnterState(AppStage_HMDModelCalibration::eM
 	case eMenuState::pendingHmdListRequest:
 	case eMenuState::pendingHmdStartRequest:
 	case eMenuState::pendingTrackerListRequest:
-		m_trackerPairState->init();
+		m_stereoTrackerState->init();
 		m_failureDetails = "";
 		break;
 	case eMenuState::pendingTrackerStartRequest:
@@ -839,7 +830,6 @@ void AppStage_HMDModelCalibration::onEnterState(AppStage_HMDModelCalibration::eM
 	case eMenuState::failedTrackerStartRequest:
 		break;
 	case eMenuState::verifyTrackers:
-		m_trackerPairState->renderTrackerIndex = 0;
 		break;
 	case eMenuState::calibrate:
 		// TODO
@@ -855,55 +845,38 @@ void AppStage_HMDModelCalibration::onEnterState(AppStage_HMDModelCalibration::eM
 void AppStage_HMDModelCalibration::update_tracker_video()
 {
 	// Render the latest from the currently active tracker
-	TrackerState &trackerState= m_trackerPairState->trackers.list[m_trackerPairState->renderTrackerIndex];
-	if (trackerState.trackerView != nullptr &&
-		PSM_PollTrackerVideoStream(trackerState.trackerView->tracker_info.tracker_id))
+	if (m_stereoTrackerState->trackerView != nullptr &&
+		PSM_PollTrackerVideoStream(m_stereoTrackerState->trackerView->tracker_info.tracker_id))
 	{
 		const unsigned char *buffer= nullptr;
 
 		if (PSM_GetTrackerVideoFrameBuffer(
-                trackerState.trackerView->tracker_info.tracker_id, 
-                PSMVideoFrameSection_Primary, 
+                m_stereoTrackerState->trackerView->tracker_info.tracker_id, 
+                PSMVideoFrameSection_Left, 
                 &buffer) == PSMResult_Success)
 		{
-			trackerState.textureAsset->copyBufferIntoTexture(buffer);
+			m_stereoTrackerState->leftTextureAsset->copyBufferIntoTexture(buffer);
+		}
+
+		if (PSM_GetTrackerVideoFrameBuffer(
+                m_stereoTrackerState->trackerView->tracker_info.tracker_id, 
+                PSMVideoFrameSection_Right, 
+                &buffer) == PSMResult_Success)
+		{
+			m_stereoTrackerState->rightTextureAsset->copyBufferIntoTexture(buffer);
 		}
 	}
 }
 
 void AppStage_HMDModelCalibration::render_tracker_video()
 {
-	TrackerState &trackerState = m_trackerPairState->trackers.list[m_trackerPairState->renderTrackerIndex];
-	if (trackerState.trackerView != nullptr &&
-		trackerState.textureAsset != nullptr)
+	if (m_stereoTrackerState->leftTextureAsset != nullptr &&
+        m_stereoTrackerState->rightTextureAsset != nullptr)
 	{
-		drawFullscreenTexture(trackerState.textureAsset->texture_id);
+		drawFullscreenStereoTexture(
+            m_stereoTrackerState->leftTextureAsset->texture_id, 
+            m_stereoTrackerState->rightTextureAsset->texture_id);
 	}
-}
-
-void AppStage_HMDModelCalibration::go_next_tracker()
-{
-	m_trackerPairState->renderTrackerIndex = (m_trackerPairState->renderTrackerIndex + 1) % get_tracker_count();
-}
-
-void AppStage_HMDModelCalibration::go_previous_tracker()
-{	
-	m_trackerPairState->renderTrackerIndex = (m_trackerPairState->renderTrackerIndex + get_tracker_count() - 1) % get_tracker_count();
-}
-
-int AppStage_HMDModelCalibration::get_tracker_count() const
-{
-	return 2;
-}
-
-int AppStage_HMDModelCalibration::get_render_tracker_index() const
-{
-	return m_trackerPairState->renderTrackerIndex;
-}
-
-PSMTracker *AppStage_HMDModelCalibration::get_render_tracker_view() const
-{
-	return m_trackerPairState->trackers.list[m_trackerPairState->renderTrackerIndex].trackerView;
 }
 
 void AppStage_HMDModelCalibration::release_devices()
@@ -926,28 +899,31 @@ void AppStage_HMDModelCalibration::release_devices()
 		m_hmdView = nullptr;
 	}
 
-	for (int tracker_index = 0; tracker_index < get_tracker_count(); ++tracker_index)
+	if (m_stereoTrackerState != nullptr)
 	{
-		TrackerState &trackerState = m_trackerPairState->trackers.list[tracker_index];
-
-		if (trackerState.textureAsset != nullptr)
+		if (m_stereoTrackerState->leftTextureAsset != nullptr)
 		{
-			delete trackerState.textureAsset;
+			delete m_stereoTrackerState->leftTextureAsset;
 		}
 
-		if (trackerState.trackerView != nullptr)
+		if (m_stereoTrackerState->rightTextureAsset != nullptr)
 		{
-			PSM_CloseTrackerVideoStream(trackerState.trackerView->tracker_info.tracker_id);
+			delete m_stereoTrackerState->rightTextureAsset;
+		}
+
+		if (m_stereoTrackerState->trackerView != nullptr)
+		{
+			PSM_CloseTrackerVideoStream(m_stereoTrackerState->trackerView->tracker_info.tracker_id);
 
             PSMRequestID request_id;
-			PSM_StopTrackerDataStreamAsync(trackerState.trackerView->tracker_info.tracker_id, &request_id);
+			PSM_StopTrackerDataStreamAsync(m_stereoTrackerState->trackerView->tracker_info.tracker_id, &request_id);
             PSM_EatResponse(request_id);
 
-			PSM_FreeTrackerListener(trackerState.trackerView->tracker_info.tracker_id);
+			PSM_FreeTrackerListener(m_stereoTrackerState->trackerView->tracker_info.tracker_id);
 		}
 	}
 
-	m_trackerPairState->init();
+	m_stereoTrackerState->init();
 }
 
 void AppStage_HMDModelCalibration::request_exit_to_app_stage(const char *app_stage_name)
@@ -1103,7 +1079,7 @@ void AppStage_HMDModelCalibration::handle_tracker_list_response(
 		assert(response_message->payload_type == PSMResponseMessage::_responsePayloadType_TrackerList);
 		const PSMTrackerList &tracker_list = response_message->payload.tracker_list;
 		
-		if (thisPtr->setup_tracker_pair(tracker_list))
+		if (thisPtr->setup_stereo_tracker(tracker_list))
 		{
 			thisPtr->setState(eMenuState::pendingTrackerStartRequest);
 		}
@@ -1123,114 +1099,49 @@ void AppStage_HMDModelCalibration::handle_tracker_list_response(
 	}
 }
 
-bool AppStage_HMDModelCalibration::setup_tracker_pair(const PSMTrackerList &tracker_list)
+bool AppStage_HMDModelCalibration::setup_stereo_tracker(const PSMTrackerList &tracker_list)
 {
 	bool bSuccess = true;
 
-	if (tracker_list.count < 2)
-	{
-		m_failureDetails = "Need at least 2 cameras connected!";
-		bSuccess = false;
-	}
-
-	// Find the pair of trackers within the capture constraints
+	// Find the first stereo camera
 	if (bSuccess)
 	{
-		int best_pair_a_index = -1;
-		int best_pair_b_index = -1;
-		float best_pair_distance = 0;
-
-		for (int tracker_a_index = 0; tracker_a_index < tracker_list.count; ++tracker_a_index)
+        int stereo_tracker_index= -1;
+		for (int tracker_index = 0; tracker_index < tracker_list.count; ++tracker_index)
 		{
-			const PSMClientTrackerInfo *tracker_a_info = &tracker_list.trackers[tracker_a_index];
+			const PSMClientTrackerInfo *tracker_info = &tracker_list.trackers[tracker_index];
 
-			PSMFrustum tracker_a_frustum;
-			PSM_FrustumSetPose(&tracker_a_frustum, &tracker_a_info->tracker_pose);
-
-			glm::vec3 tracker_a_pos = psm_vector3f_to_glm_vec3(tracker_a_frustum.origin);
-			glm::vec3 tracker_a_forward = psm_vector3f_to_glm_vec3(tracker_a_frustum.forward);
-
-			for (int tracker_b_index = tracker_a_index+1; tracker_b_index < tracker_list.count; ++tracker_b_index)
-			{
-				const PSMClientTrackerInfo *tracker_b_info = &tracker_list.trackers[tracker_b_index];
-
-				PSMFrustum tracker_b_frustum;
-				PSM_FrustumSetPose(&tracker_b_frustum, &tracker_b_info->tracker_pose);
-
-				glm::vec3 tracker_b_pos = psm_vector3f_to_glm_vec3(tracker_b_frustum.origin);
-				glm::vec3 tracker_b_forward = psm_vector3f_to_glm_vec3(tracker_b_frustum.forward);
-
-				if (glm::dot(tracker_a_forward, tracker_b_forward) >= k_cosine_aligned_camera_angle)
-				{
-					const float test_distance = glm::distance(tracker_a_pos, tracker_b_pos);
-
-					if (best_pair_distance <= 0 || test_distance < best_pair_distance)
-					{
-						best_pair_a_index = tracker_a_index;
-						best_pair_b_index = tracker_b_index;
-						best_pair_distance = test_distance;
-					}
-				}
-			}
+            if (tracker_info->tracker_intrinsics.intrinsics_type == PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS)
+            {
+                stereo_tracker_index= tracker_index;
+                break;
+            }
 		}
 
-		if (best_pair_a_index != -1 && best_pair_b_index != -1)
+		if (stereo_tracker_index != -1)
 		{
-			const PSMClientTrackerInfo *tracker_a_info = &tracker_list.trackers[best_pair_a_index];
-			const PSMClientTrackerInfo *tracker_b_info = &tracker_list.trackers[best_pair_b_index];
+			const PSMClientTrackerInfo *tracker_info = &tracker_list.trackers[stereo_tracker_index];
 
-			// T = Translation from camera A to camera B
-			Eigen::Vector3f a_pos = psm_vector3f_to_eigen_vector3(tracker_a_info->tracker_pose.Position);
-			Eigen::Vector3f b_pos = psm_vector3f_to_eigen_vector3(tracker_b_info->tracker_pose.Position);
-			Eigen::Vector3f T = b_pos - a_pos;
-			Eigen::Matrix3f S;
-			S << 0.f, T.z(), -T.y(),
-				-T.z(), 0.f, T.x(),
-				T.y(), -T.x(), 0.f;
+			// Get the fundamental matrix for the tracker
+            PSMTrackerIntrinsics intrinsics;
+	        PSM_GetTrackerIntrinsics(tracker_info->tracker_id, &intrinsics);
+			m_stereoTrackerState->F_ab= psm_matrix3d_to_eigen_matrix3f(intrinsics.intrinsics.stereo.fundamental_matrix);
+            m_stereoTrackerState->Q= psm_matrix4d_to_eigen_matrix4d(intrinsics.intrinsics.stereo.reprojection_matrix);
 
-			// R = Rotation matrix from camera A to camera B
-			Eigen::Quaternionf a_quat = psm_quatf_to_eigen_quaternionf(tracker_a_info->tracker_pose.Orientation);
-			Eigen::Quaternionf b_quat = psm_quatf_to_eigen_quaternionf(tracker_b_info->tracker_pose.Orientation);
-			Eigen::Quaternionf R_quat = a_quat.conjugate() * b_quat;
-			Eigen::Matrix3f R = R_quat.toRotationMatrix();
+			// Allocate tracker view for the stereo camera
+			PSM_AllocateTrackerListener(tracker_info->tracker_id, tracker_info);
 
-			// Essential Matrix from A to B, depending on extrinsic parameters
-			Eigen::Matrix3f E = R * S;
+			m_stereoTrackerState->trackerView= PSM_GetTracker(tracker_info->tracker_id);
+			m_stereoTrackerState->leftTextureAsset= nullptr;
+			m_stereoTrackerState->rightTextureAsset= nullptr;
 
-			// Get the intrinsic matrices for A and B
-            PSMTrackerIntrinsics intrinsicA;
-            PSMTrackerIntrinsics intrinsicB;
-	        PSM_GetTrackerIntrinsics(tracker_a_info->tracker_id, &intrinsicA);
-            PSM_GetTrackerIntrinsics(tracker_b_info->tracker_id, &intrinsicB);
-			Eigen::Matrix3f Ka= psm_matrix3d_to_eigen_matrix3f(intrinsicA.intrinsics.mono.camera_matrix);
-			Eigen::Matrix3f Kb= psm_matrix3d_to_eigen_matrix3f(intrinsicB.intrinsics.mono.camera_matrix);
-
-			// Compute the fundamental matrix from camera A to camera B
-			m_trackerPairState->F_ab = Kb.inverse().transpose() * E * Ka.inverse();
-
-			// Allocate tracker views for A and B
-			PSM_AllocateTrackerListener(tracker_a_info->tracker_id, tracker_a_info);
-			PSM_AllocateTrackerListener(tracker_b_info->tracker_id, tracker_b_info);
-
-			m_trackerPairState->trackers.pair.a.trackerView= PSM_GetTracker(tracker_a_info->tracker_id);
-			m_trackerPairState->trackers.pair.a.textureAsset = nullptr;
-			m_trackerPairState->trackers.pair.b.trackerView = PSM_GetTracker(tracker_b_info->tracker_id);
-			m_trackerPairState->trackers.pair.b.textureAsset = nullptr;
+            // Start streaming tracker video
+            request_tracker_start_stream(m_stereoTrackerState->trackerView);
 		}
 		else
 		{
-			m_failureDetails = "Can't find two cameras facing roughly the same direction!";
+			m_failureDetails = "Can't find stereo camera!";
 			bSuccess = false;
-		}
-	}
-
-	if (bSuccess)
-	{
-		for (int tracker_index = 0; tracker_index < 2; ++tracker_index)
-		{
-			PSMTracker *tracker_view = m_trackerPairState->trackers.list[tracker_index].trackerView;
-
-			request_tracker_start_stream(tracker_view);
 		}
 	}
 
@@ -1241,9 +1152,6 @@ void AppStage_HMDModelCalibration::request_tracker_start_stream(
 	PSMTracker *tracker_view)
 {
 	setState(eMenuState::pendingTrackerStartRequest);
-
-	// Increment the number of requests we're waiting to get back
-	++m_trackerPairState->pendingTrackerStartCount;
 
 	// Request data to start streaming to the tracker
 	PSMRequestID requestID;
@@ -1267,33 +1175,29 @@ void AppStage_HMDModelCalibration::handle_tracker_start_stream_response(
 		const PSMoveProtocol::Request *request = GET_PSMOVEPROTOCOL_REQUEST(response_message->opaque_request_handle);
 		const int tracker_id = request->request_start_tracker_data_stream().tracker_id();
 
-		TrackerState &tracker_A_state = thisPtr->m_trackerPairState->trackers.pair.a;
-		TrackerState &tracker_B_state = thisPtr->m_trackerPairState->trackers.pair.b;
-
-		// The context holds everything a handler needs to evaluate a response
-		TrackerState &trackerState = (tracker_id == tracker_A_state.trackerView->tracker_info.tracker_id) ? tracker_A_state : tracker_B_state;
-
 		// Open the shared memory that the video stream is being written to
-		if (PSM_OpenTrackerVideoStream(trackerState.trackerView->tracker_info.tracker_id) == PSMResult_Success)
+		if (PSM_OpenTrackerVideoStream(tracker_id) == PSMResult_Success)
 		{
             PSMVector2f screenSize;
-            PSM_GetTrackerScreenSize(trackerState.trackerView->tracker_info.tracker_id, &screenSize);
+            PSM_GetTrackerScreenSize(tracker_id, &screenSize);
 
 			// Create a texture to render the video frame to
-			trackerState.textureAsset = new TextureAsset();
-			trackerState.textureAsset->init(
+			thisPtr->m_stereoTrackerState->leftTextureAsset = new TextureAsset();
+            thisPtr->m_stereoTrackerState->rightTextureAsset = new TextureAsset();
+			thisPtr->m_stereoTrackerState->leftTextureAsset->init(
 				static_cast<unsigned int>(screenSize.x),
 				static_cast<unsigned int>(screenSize.y),
 				GL_RGB, // texture format
 				GL_BGR, // buffer format
 				nullptr);
-
-			// See if this was the last tracker we were waiting to get a response from
-			--thisPtr->m_trackerPairState->pendingTrackerStartCount;
-			if (thisPtr->m_trackerPairState->pendingTrackerStartCount <= 0)
-			{
-				thisPtr->handle_all_devices_ready();
-			}
+			thisPtr->m_stereoTrackerState->rightTextureAsset->init(
+				static_cast<unsigned int>(screenSize.x),
+				static_cast<unsigned int>(screenSize.y),
+				GL_RGB, // texture format
+				GL_BGR, // buffer format
+				nullptr);
+    
+			thisPtr->handle_all_devices_ready();
 		}
         else
         {
@@ -1328,68 +1232,13 @@ void AppStage_HMDModelCalibration::handle_all_devices_ready()
 }
 
 //-- private methods -----
-static glm::mat4 computeGLMCameraTransformMatrix(const PSMTracker *tracker_view)
-{
-
-	const PSMPosef pose = tracker_view->tracker_info.tracker_pose;
-	const PSMQuatf &quat = pose.Orientation;
-	const PSMVector3f &pos = pose.Position;
-
-	const glm::quat glm_quat(quat.w, quat.x, quat.y, quat.z);
-	const glm::vec3 glm_pos(pos.x, pos.y, pos.z);
-	const glm::mat4 glm_camera_xform = glm_mat4_from_pose(glm_quat, glm_pos);
-
-	return glm_camera_xform;
-}
-
-static cv::Matx34f computeOpenCVCameraExtrinsicMatrix(const PSMTracker *tracker_view)
-{
-	cv::Matx34f out;
-
-	// Extrinsic matrix is the inverse of the camera pose matrix
-	const glm::mat4 glm_camera_xform = computeGLMCameraTransformMatrix(tracker_view);
-	const glm::mat4 glm_mat = glm::inverse(glm_camera_xform);
-
-	out(0, 0) = glm_mat[0][0]; out(0, 1) = glm_mat[1][0]; out(0, 2) = glm_mat[2][0]; out(0, 3) = glm_mat[3][0];
-	out(1, 0) = glm_mat[0][1]; out(1, 1) = glm_mat[1][1]; out(1, 2) = glm_mat[2][1]; out(1, 3) = glm_mat[3][1];
-	out(2, 0) = glm_mat[0][2]; out(2, 1) = glm_mat[1][2]; out(2, 2) = glm_mat[2][2]; out(2, 3) = glm_mat[3][2];
-
-	return out;
-}
-
-static cv::Matx33f computeOpenCVCameraIntrinsicMatrix(const PSMTracker *tracker_view)
-{
-	cv::Matx33f out;
-
-	const PSMClientTrackerInfo &tracker_info = tracker_view->tracker_info;
-    const PSMMatrix3d &camera_matrix= tracker_info.tracker_intrinsics.intrinsics.mono.camera_matrix;
-
-	out(0, 0) = camera_matrix.m[0][0]; out(0, 1) = camera_matrix.m[0][1]; out(0, 2) = camera_matrix.m[0][2];
-	out(1, 0) = camera_matrix.m[1][0]; out(1, 1) = camera_matrix.m[1][1]; out(1, 2) = camera_matrix.m[1][2];
-	out(2, 0) = camera_matrix.m[2][0]; out(2, 1) = camera_matrix.m[2][1]; out(2, 2) = camera_matrix.m[2][2];
-
-	return out;
-}
-
-static cv::Matx34f computeOpenCVCameraPinholeMatrix(const PSMTracker *tracker_view)
-{
-	cv::Matx34f extrinsic_matrix = computeOpenCVCameraExtrinsicMatrix(tracker_view);
-	cv::Matx33f intrinsic_matrix = computeOpenCVCameraIntrinsicMatrix(tracker_view);
-	cv::Matx34f pinhole_matrix = intrinsic_matrix * extrinsic_matrix;
-
-	return pinhole_matrix;
-}
-
 static bool triangulateHMDProjections(
 	PSMHeadMountedDisplay *hmd_view, 
-	TrackerPairState *tracker_pair_state,
+	StereoCameraState *stereo_tracker_state,
 	std::vector<Eigen::Vector3f> &out_triangulated_points)
 {
-	const PSMTracker *TrackerViewA = tracker_pair_state->trackers.pair.a.trackerView;
-	const PSMTracker *TrackerViewB = tracker_pair_state->trackers.pair.b.trackerView;
-
-	PSMTrackingProjection trackingProjectionA;
-	PSMTrackingProjection trackingProjectionB;
+	const PSMTracker *TrackerView = stereo_tracker_state->trackerView;
+	PSMTrackingProjection trackingProjection;
 
 	out_triangulated_points.clear();
 
@@ -1397,63 +1246,66 @@ static bool triangulateHMDProjections(
 	bool bIsTracking= false;
 	if (PSM_GetIsHmdTracking(hmd_view->HmdID, &bIsTracking) == PSMResult_Success)
 	{
-        //###HipsterSloth - Disabled due to projection networking refactor
-#if 0
+        PSMTrackerID selected_tracker_id= -1;
+
 		if (bIsTracking &&
-			PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, TrackerViewA->tracker_info.tracker_id, &trackingProjectionA) &&
-			PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, TrackerViewB->tracker_info.tracker_id, &trackingProjectionB))
+			PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, &selected_tracker_id, &trackingProjection))
 		{
-			assert(trackingProjectionA.shape_type == PSMTrackingProjection::PSMShape_PointCloud);
-			assert(trackingProjectionB.shape_type == PSMTrackingProjection::PSMShape_PointCloud);
+			assert(trackingProjection.shape_type == PSMShape_PointCloud);
+            assert(trackingProjection.projection_count == STEREO_PROJECTION_COUNT);
 
-			const PSMVector2f *pointsA = trackingProjectionA.shape.pointcloud.points;
-			const PSMVector2f *pointsB = trackingProjectionB.shape.pointcloud.points;
-			const int point_countA = trackingProjectionA.shape.pointcloud.point_count;
-			const int point_countB = trackingProjectionB.shape.pointcloud.point_count;
-
-			// See: http://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
-			cv::Mat projMatA = cv::Mat(computeOpenCVCameraPinholeMatrix(TrackerViewA));
-			cv::Mat projMatB = cv::Mat(computeOpenCVCameraPinholeMatrix(TrackerViewB));
+            // Undistorted/rectified points
+			const PSMVector2f *leftPoints = trackingProjection.projections[LEFT_PROJECTION_INDEX].shape.pointcloud.points;
+            const PSMVector2f *rightPoints = trackingProjection.projections[RIGHT_PROJECTION_INDEX].shape.pointcloud.points;
+			const int leftPointCount = trackingProjection.projections[LEFT_PROJECTION_INDEX].shape.pointcloud.point_count;
+			const int rightPointCount = trackingProjection.projections[RIGHT_PROJECTION_INDEX].shape.pointcloud.point_count;
 
 			// Make a set of the uncorrelated points on trackerB
-			std::set<int> pointBIndices;
-			for (int point_indexB = 0; point_indexB < point_countB; ++point_indexB)
+			std::set<int> rightPointIndices;
+			for (int rightPointIndex = 0; rightPointIndex < rightPointCount; ++rightPointIndex)
 			{
-				pointBIndices.insert(point_indexB);
+				rightPointIndices.insert(rightPointIndex);
 			}
 
 			// For each point in one tracking projection A, 
 			// try and find the corresponding point in the projection B
-			for (int point_indexA = 0; point_indexA < point_countA; ++point_indexA)
+			for (int leftPointIndex = 0; leftPointIndex < leftPointCount; ++leftPointIndex)
 			{
-				const PSMVector2f &pointA = pointsA[point_indexA];
-				const cv::Mat cvPointA = cv::Mat(cv::Point2f(pointA.x, pointA.y));
+				const PSMVector2f &leftPoint = leftPoints[leftPointIndex];
+				const cv::Mat cvLeftPoint = cv::Mat(cv::Point2f(leftPoint.x, leftPoint.y));
 
-				for (auto it = pointBIndices.begin(); it != pointBIndices.end(); )
+				for (auto it = rightPointIndices.begin(); it != rightPointIndices.end(); )
 				{
-					const int point_indexB = *it;
-					const PSMVector2f &pointB = pointsB[point_indexB];
-					cv::Mat cvPointB = cv::Mat(cv::Point2f(pointB.x, pointB.y));
+					const int rightPointIndex = *it;
+					const PSMVector2f &rightPoint = rightPoints[rightPointIndex];
+					cv::Mat cvRightPoint = cv::Mat(cv::Point2f(rightPoint.x, rightPoint.y));
 
-					if (tracker_pair_state->do_points_correspond(cvPointA, cvPointB, tracker_pair_state->tolerance))
+					if (stereo_tracker_state->do_points_correspond(cvLeftPoint, cvRightPoint, stereo_tracker_state->tolerance))
 					{
-						// Triangulate the world position from the two cameras
-						cv::Mat point3D(1, 1, CV_32FC4);
-						cv::triangulatePoints(projMatA, projMatB, cvPointA, cvPointB, point3D);
+                        // Compute the horizontal pixel disparity between the left and right corresponding pixels
+                        const double disparity= (double)(leftPoint.x - rightPoint.x);
 
-						// Get the world space position
-						const float w = point3D.at<float>(3, 0);
-						const Eigen::Vector3f triangulated_point(
-							point3D.at<float>(0, 0) / w,
-							point3D.at<float>(1, 0) / w,
-							point3D.at<float>(2, 0) / w);
+                        if (fabs(disparity) > k_real64_epsilon)
+                        {
+                            // Project the left pixel + disparity into the world using
+                            // the projection matrix 'Q' computed during stereo calibration
+                            Eigen::Vector4d pixel((double)leftPoint.x, (double)leftPoint.y, disparity, 1.0);
+                            Eigen::Vector4d homogeneusPoint= stereo_tracker_state->Q * pixel;
 
-						// Add to the list of world space points we saw this frame
-						out_triangulated_points.push_back(triangulated_point);
+						    // Get the triangulated 3d position
+						    const double w = homogeneusPoint.w();
+						    const Eigen::Vector3f triangulated_point(
+							    (float)(homogeneusPoint.x() / w),
+							    (float)(homogeneusPoint.y() / w),
+							    (float)(homogeneusPoint.z() / w));
+
+						    // Add to the list of world space points we saw this frame
+						    out_triangulated_points.push_back(triangulated_point);
+                        }
 
 						// Remove the point index from the set of indices to consider 
 						// so that it's not correlated with another point in tracker A
-						it= pointBIndices.erase(it);
+						it= rightPointIndices.erase(it);
 					}
 					else
 					{
@@ -1462,47 +1314,43 @@ static bool triangulateHMDProjections(
 				}
 			}
 		} 
-#endif
 	}
 
 	return out_triangulated_points.size() >= 3;
 }
 
-static PSMVector2f projectWorldPositionOnTracker(
-	const PSMVector3f &worldSpacePosition,
-	const PSMTracker *trackerView)
+static PSMVector2f projectTrackerRelativePositionOnTracker(
+	const PSMVector3f &trackerRelativePosition,
+    const PSMMatrix3d &camera_matrix,
+    const PSMDistortionCoefficients &distortion_coefficients)
 {
-	// Assume no distortion
-	// TODO: Probably should get the distortion coefficients out of the tracker
-	cv::Mat cvDistCoeffs(4, 1, cv::DataType<float>::type);
-	cvDistCoeffs.at<float>(0) = 0;
-	cvDistCoeffs.at<float>(1) = 0;
-	cvDistCoeffs.at<float>(2) = 0;
-	cvDistCoeffs.at<float>(3) = 0;
-
+	cv::Mat cvDistCoeffs(5, 1, cv::DataType<double>::type);
+	cvDistCoeffs.at<double>(0) = distortion_coefficients.k1;
+	cvDistCoeffs.at<double>(1) = distortion_coefficients.k2;
+	cvDistCoeffs.at<double>(2) = distortion_coefficients.p1;
+	cvDistCoeffs.at<double>(3) = distortion_coefficients.p2;
+    cvDistCoeffs.at<double>(4) = distortion_coefficients.k3;
+    
 	// Use the identity transform for tracker relative positions
 	cv::Mat rvec(3, 1, cv::DataType<double>::type, double(0));
 	cv::Mat tvec(3, 1, cv::DataType<double>::type, double(0));
 
-	// Convert the world space position into a tracker relative location
-	PSMVector3f trackerRelativePosition = PSM_PosefInverseTransformPoint(&trackerView->tracker_info.tracker_pose, &worldSpacePosition);
-
 	// Only one point to project
-	std::vector<cv::Point3f> cvObjectPoints;
+	std::vector<cv::Point3d> cvObjectPoints;
 	cvObjectPoints.push_back(
-		cv::Point3f(
-			trackerRelativePosition.x,
-			trackerRelativePosition.y,
-			trackerRelativePosition.z));
+		cv::Point3d(
+			(double)trackerRelativePosition.x,
+			(double)trackerRelativePosition.y,
+			(double)trackerRelativePosition.z));
 
 	// Compute the camera intrinsic matrix in opencv format
-	cv::Matx33f cvCameraMatrix = computeOpenCVCameraIntrinsicMatrix(trackerView);
+	cv::Matx33d cvCameraMatrix = psmove_matrix3x3_to_cv_mat33d(camera_matrix);
 
 	// Projected point 
-	std::vector<cv::Point2f> projectedPoints;
+	std::vector<cv::Point2d> projectedPoints;
 	cv::projectPoints(cvObjectPoints, rvec, tvec, cvCameraMatrix, cvDistCoeffs, projectedPoints);
 
-	PSMVector2f screenLocation = {projectedPoints[0].x, projectedPoints[1].y};
+	PSMVector2f screenLocation = {(float)projectedPoints[0].x, (float)projectedPoints[1].y};
 
 	return screenLocation;
 }

@@ -1520,9 +1520,6 @@ PSMResult PSM_GetIsHmdTracking(PSMHmdID hmd_id, bool *out_is_tracking)
 
 PSMResult PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackingProjectionCount projection_index, PSMTrackerID *outTrackerId, PSMVector2f *outLocation)
 {
-	assert(outLocation);
-    assert(outTrackerId);
-
     if (g_psm_client != nullptr && IS_VALID_HMD_INDEX(hmd_id))
     {
         PSMHeadMountedDisplay *hmd= g_psm_client->get_hmd_view(hmd_id);
@@ -1542,8 +1539,10 @@ PSMResult PSM_GetHmdPixelLocationOnTracker(PSMHmdID hmd_id, PSMTrackingProjectio
 
 		if (trackerData != nullptr)
 		{
-            *outTrackerId = trackerData->TrackerID;
-			*outLocation = trackerData->ScreenLocations[projection_index];
+            if (outTrackerId)
+                *outTrackerId = trackerData->TrackerID;
+            if (outLocation)            
+                *outLocation = trackerData->ScreenLocations[projection_index];
 			return PSMResult_Success;
 		}
 	}
