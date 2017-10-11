@@ -195,6 +195,11 @@ list(APPEND TEST_PSMOVE_SRC
     ${ROOT_DIR}/src/psmoveservice/PSMoveConfig/PSMoveConfig.cpp
     ${ROOT_DIR}/src/psmoveservice/PSMoveController/PSMoveController.h
     ${ROOT_DIR}/src/psmoveservice/PSMoveController/PSMoveController.cpp)
+IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")    
+    list(APPEND TEST_PSMOVE_SRC 
+        ${ROOT_DIR}/src/psmoveservice/Platform/WinUSBApi.cpp
+        ${ROOT_DIR}/src/psmoveservice/Platform/WinUSBBulkTransferBundle.cpp)
+ENDIF()
 
 # psmoveprotocol
 list(APPEND TEST_PSMOVE_INCL_DIRS ${ROOT_DIR}/src/psmoveprotocol)
@@ -306,6 +311,11 @@ list(APPEND TEST_NAVI_SRC
     ${ROOT_DIR}/src/psmoveservice/PSMoveConfig/PSMoveConfig.cpp
     ${ROOT_DIR}/src/psmoveservice/PSNaviController/PSNaviController.h
     ${ROOT_DIR}/src/psmoveservice/PSNaviController/PSNaviController.cpp)
+IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")    
+    list(APPEND TEST_NAVI_SRC 
+        ${ROOT_DIR}/src/psmoveservice/Platform/WinUSBApi.cpp
+        ${ROOT_DIR}/src/psmoveservice/Platform/WinUSBBulkTransferBundle.cpp)
+ENDIF()
 
 # psmoveprotocol
 list(APPEND TEST_NAVI_INCL_DIRS ${ROOT_DIR}/src/psmoveprotocol)
@@ -426,6 +436,11 @@ list(APPEND TEST_DS4_CTRLR_SRC
     ${ROOT_DIR}/src/psmoveservice/PSMoveConfig/PSMoveConfig.cpp
     ${ROOT_DIR}/src/psmoveservice/PSDualShock4/PSDualShock4Controller.h
     ${ROOT_DIR}/src/psmoveservice/PSDualShock4/PSDualShock4Controller.cpp)
+IF(${CMAKE_SYSTEM_NAME} MATCHES "Windows")    
+    list(APPEND TEST_DS4_CTRLR_SRC 
+        ${ROOT_DIR}/src/psmoveservice/Platform/WinUSBApi.cpp
+        ${ROOT_DIR}/src/psmoveservice/Platform/WinUSBBulkTransferBundle.cpp)
+ENDIF()
 
 # psmoveprotocol
 list(APPEND TEST_DS4_CTRLR_INCL_DIRS ${ROOT_DIR}/src/psmoveprotocol)

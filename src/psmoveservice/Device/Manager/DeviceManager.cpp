@@ -243,6 +243,20 @@ DeviceManager::shutdown()
 }
 
 // -- Queries ---
+const void*
+DeviceManager::get_device_class_platform_identifier(
+	const DeviceClass deviceClass)
+{
+	const void* result = nullptr;
+
+	if (m_platform_api != nullptr)
+	{
+		result = m_platform_api->get_device_class_platform_identifier(deviceClass);
+	}
+
+	return result;
+}
+
 bool 
 DeviceManager::get_device_property(
 	const DeviceClass deviceClass,

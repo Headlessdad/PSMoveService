@@ -59,6 +59,7 @@ public:
 
 	// -- Queries ---
 	inline eDevicePlatformApiType get_api_type() const { return m_platform_api_type; }
+    const void* get_device_class_platform_identifier(const DeviceClass deviceClass);
 	bool get_device_property(
 		const DeviceClass deviceClass,
 		const int vendor_id,
