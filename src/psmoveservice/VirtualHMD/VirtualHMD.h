@@ -27,9 +27,10 @@ public:
 		, position_variance_exp_fit_b(-0.000567041978f)
         , prediction_time(0.f)
 		, tracking_color_id(eCommonTrackingColorID::Blue)
-        , bulb_radius(2.25f) // The radius of the psmove tracking bulb in cm
     {
-    };
+        trackingShape.shape_type= eCommonTrackingShapeType::Sphere;
+        trackingShape.shape.sphere.radius_cm= 2.25f; // The radius of the psmove tracking bulb in cm
+    }
 
     virtual const boost::property_tree::ptree config2ptree();
     virtual void ptree2config(const boost::property_tree::ptree &pt);
@@ -57,7 +58,7 @@ public:
 	float prediction_time;
 
 	eCommonTrackingColorID tracking_color_id;
-    float bulb_radius;
+    CommonDeviceTrackingShape trackingShape;
 };
 
 struct VirtualHMDState : public CommonHMDState

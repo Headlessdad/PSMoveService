@@ -7,6 +7,7 @@
 #include "MathUtility.h"
 #include "ServerLog.h"
 #include "ServerUtility.h"
+#include <algorithm>
 #include <vector>
 #include <cstdlib>
 #ifdef _WIN32
@@ -21,7 +22,7 @@
 
 // -- public interface
 // -- Morpheus HMD Config
-const int VirtualHMDConfig::CONFIG_VERSION = 1;
+const int VirtualHMDConfig::CONFIG_VERSION = 2;
 
 const boost::property_tree::ptree
 VirtualHMDConfig::config2ptree()
@@ -40,7 +41,55 @@ VirtualHMDConfig::config2ptree()
     pt.put("PositionFilter.MaxVelocity", max_velocity);
 
     pt.put("prediction_time", prediction_time);
-    pt.put("bulb_radius", bulb_radius);
+
+    switch (trackingShape.shape_type)
+    {
+    case eCommonTrackingShapeType::Sphere:
+        pt.put("tracking_shape", "sphere");
+        pt.put("bulb.radius", trackingShape.shape.sphere.radius_cm);
+        break;
+    case eCommonTrackingShapeType::LightBar:
+        pt.put("tracking_shape", "light_bar");
+        pt.put("lightbar.quad.v0.x", trackingShape.shape.light_bar.quad[0].x);
+        pt.put("lightbar.quad.v0.y", trackingShape.shape.light_bar.quad[0].y);
+        pt.put("lightbar.quad.v0.z", trackingShape.shape.light_bar.quad[0].z);
+        pt.put("lightbar.quad.v1.x", trackingShape.shape.light_bar.quad[1].x);
+        pt.put("lightbar.quad.v1.y", trackingShape.shape.light_bar.quad[1].y);
+        pt.put("lightbar.quad.v1.z", trackingShape.shape.light_bar.quad[1].z);
+        pt.put("lightbar.quad.v2.x", trackingShape.shape.light_bar.quad[2].x);
+        pt.put("lightbar.quad.v2.y", trackingShape.shape.light_bar.quad[2].y);
+        pt.put("lightbar.quad.v2.z", trackingShape.shape.light_bar.quad[2].z);
+        pt.put("lightbar.quad.v3.x", trackingShape.shape.light_bar.quad[3].x);
+        pt.put("lightbar.quad.v3.y", trackingShape.shape.light_bar.quad[3].y);
+        pt.put("lightbar.quad.v3.z", trackingShape.shape.light_bar.quad[3].z);
+        pt.put("lightbar.triangle.v0.x", trackingShape.shape.light_bar.triangle[0].x);
+        pt.put("lightbar.triangle.v0.y", trackingShape.shape.light_bar.triangle[0].y);
+        pt.put("lightbar.triangle.v0.z", trackingShape.shape.light_bar.triangle[0].z);
+        pt.put("lightbar.triangle.v1.x", trackingShape.shape.light_bar.triangle[1].x);
+        pt.put("lightbar.triangle.v1.y", trackingShape.shape.light_bar.triangle[1].y);
+        pt.put("lightbar.triangle.v1.z", trackingShape.shape.light_bar.triangle[1].z);
+        pt.put("lightbar.triangle.v2.x", trackingShape.shape.light_bar.triangle[2].x);
+        pt.put("lightbar.triangle.v2.y", trackingShape.shape.light_bar.triangle[2].y);
+        pt.put("lightbar.triangle.v2.z", trackingShape.shape.light_bar.triangle[2].z);
+        break;
+    case eCommonTrackingShapeType::PointCloud:
+        pt.put("tracking_shape", "point_cloud");
+        pt.put("points.count", trackingShape.shape.point_cloud.point_count);
+        for (int point_index= 0; point_index < trackingShape.shape.point_cloud.point_count; ++point_index)
+        {
+            const char axis_label[3]= {'x', 'y', 'z'};
+            const float* axis_values= (const float *)&trackingShape.shape.point_cloud.point[point_index];
+
+            for (int axis_index = 0; axis_index < 3; ++axis_index)
+            {
+                char key[64];
+
+                ServerUtility::format_string(key, sizeof(key), "points.v%d.%c", point_index, axis_label[axis_index]);
+                pt.put(key, axis_values[axis_index]);
+            }
+        }
+        break;
+    }
 
     writeTrackingColor(pt, tracking_color_id);
 
@@ -68,7 +117,60 @@ VirtualHMDConfig::ptree2config(const boost::property_tree::ptree &pt)
 
         // Read the tracking color
         tracking_color_id = static_cast<eCommonTrackingColorID>(readTrackingColor(pt));
-        bulb_radius = pt.get<float>("bulb_radius", bulb_radius);
+
+        std::string shape_type= pt.get<std::string>("tracking_shape", "sphere");
+        if (shape_type == "sphere")
+            trackingShape.shape_type= eCommonTrackingShapeType::Sphere;
+        else if (shape_type == "light_bar")
+            trackingShape.shape_type= eCommonTrackingShapeType::LightBar;
+        else if (shape_type == "point_cloud")
+            trackingShape.shape_type= eCommonTrackingShapeType::PointCloud;
+
+        switch (trackingShape.shape_type)
+        {
+        case eCommonTrackingShapeType::Sphere:
+            trackingShape.shape.sphere.radius_cm= pt.get<float>("bulb.radius", 2.25f);
+            break;
+        case eCommonTrackingShapeType::LightBar:
+            trackingShape.shape.light_bar.quad[0].x= pt.get<float>("lightbar.quad.v0.x", 0.0f);
+            trackingShape.shape.light_bar.quad[0].y= pt.get<float>("lightbar.quad.v0.y", 0.0f);
+            trackingShape.shape.light_bar.quad[0].z= pt.get<float>("lightbar.quad.v0.z", 0.0f);
+            trackingShape.shape.light_bar.quad[1].x= pt.get<float>("lightbar.quad.v1.x", 0.0f);
+            trackingShape.shape.light_bar.quad[1].y= pt.get<float>("lightbar.quad.v1.y", 0.0f);
+            trackingShape.shape.light_bar.quad[1].z= pt.get<float>("lightbar.quad.v1.z", 0.0f);
+            trackingShape.shape.light_bar.quad[2].x= pt.get<float>("lightbar.quad.v2.x", 0.0f);
+            trackingShape.shape.light_bar.quad[2].y= pt.get<float>("lightbar.quad.v2.y", 0.0f);
+            trackingShape.shape.light_bar.quad[2].z= pt.get<float>("lightbar.quad.v2.z", 0.0f);
+            trackingShape.shape.light_bar.quad[3].x= pt.get<float>("lightbar.quad.v3.x", 0.0f);
+            trackingShape.shape.light_bar.quad[3].y= pt.get<float>("lightbar.quad.v3.y", 0.0f);
+            trackingShape.shape.light_bar.quad[3].z= pt.get<float>("lightbar.quad.v3.z", 0.0f);
+            trackingShape.shape.light_bar.triangle[0].x= pt.get<float>("lightbar.triangle.v0.x", 0.0f);
+            trackingShape.shape.light_bar.triangle[0].y= pt.get<float>("lightbar.triangle.v0.y", 0.0f);
+            trackingShape.shape.light_bar.triangle[0].z= pt.get<float>("lightbar.triangle.v0.z", 0.0f);
+            trackingShape.shape.light_bar.triangle[1].x= pt.get<float>("lightbar.triangle.v1.x", 0.0f);
+            trackingShape.shape.light_bar.triangle[1].y= pt.get<float>("lightbar.triangle.v1.y", 0.0f);
+            trackingShape.shape.light_bar.triangle[1].z= pt.get<float>("lightbar.triangle.v1.z", 0.0f);
+            trackingShape.shape.light_bar.triangle[2].x= pt.get<float>("lightbar.triangle.v2.x", 0.0f);
+            trackingShape.shape.light_bar.triangle[2].y= pt.get<float>("lightbar.triangle.v2.y", 0.0f);
+            trackingShape.shape.light_bar.triangle[2].z= pt.get<float>("lightbar.triangle.v2.z", 0.0f);
+            break;
+        case eCommonTrackingShapeType::PointCloud:
+            trackingShape.shape.point_cloud.point_count= std::min(pt.get<int>("points.count", 0), (int)CommonDeviceTrackingShape::MAX_POINT_CLOUD_POINT_COUNT);
+            for (int point_index= 0; point_index < trackingShape.shape.point_cloud.point_count; ++point_index)
+            {
+                const char axis_label[3]= {'x', 'y', 'z'};
+                float* axis_values= (float *)&trackingShape.shape.point_cloud.point[point_index];
+
+                for (int axis_index = 0; axis_index < 3; ++axis_index)
+                {
+                    char key[64];
+
+                    ServerUtility::format_string(key, sizeof(key), "points.v%d.%c", point_index, axis_label[axis_index]);
+                    axis_values[axis_index]= pt.get<float>(key, 0.f);
+                }
+            }
+            break;
+        }
     }
     else
     {
@@ -232,8 +334,7 @@ VirtualHMD::poll()
 void
 VirtualHMD::getTrackingShape(CommonDeviceTrackingShape &outTrackingShape) const
 {
-    outTrackingShape.shape_type = eCommonTrackingShapeType::Sphere;
-    outTrackingShape.shape.sphere.radius_cm= cfg.bulb_radius;
+    outTrackingShape= cfg.trackingShape;
 }
 
 
