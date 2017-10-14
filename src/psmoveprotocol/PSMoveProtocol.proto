@@ -1173,7 +1173,8 @@ message DeviceOutputDataFrame
                 repeated Pixel screen_locations= 2; // 1 for mono, 2 for stereo
                 Position relative_position_cm= 3;
                 repeated Ellipse projected_spheres= 4; // 1 for mono, 2 for stereo
-                uint32 valid_tracker_bitmask = 5;
+				repeated Polygon projected_point_clouds= 5; // 1 for mono, 2 for stereo
+                uint32 valid_tracker_bitmask = 6;
             }
             RawTrackerData raw_tracker_data = 5;
 

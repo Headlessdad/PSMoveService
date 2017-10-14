@@ -278,7 +278,8 @@ void AppStage_HMDSettings::renderUI()
                 }
             }
 
-            if (hmdInfo.HmdType == AppStage_HMDSettings::eHMDType::Morpheus)
+            if (hmdInfo.HmdType == AppStage_HMDSettings::eHMDType::Morpheus || 
+                hmdInfo.HmdType == AppStage_HMDSettings::eHMDType::VirtualHMD)
             {
                 if (m_app->getIsLocalServer())
                 {

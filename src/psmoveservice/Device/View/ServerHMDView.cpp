@@ -1358,14 +1358,28 @@ static void generate_virtual_hmd_data_frame_for_stream(
 					        const CommonTrackingProjectionData &trackerRelativeProjection =
 						        positionEstimate->projection.projections[projection_index];
 
-					        assert(positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Ellipse);
-					        PSMoveProtocol::Ellipse *ellipse = raw_tracker_data->add_projected_spheres();
+                            if (positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Ellipse)
+                            {
+					            PSMoveProtocol::Ellipse *ellipse = raw_tracker_data->add_projected_spheres();
 
-                            ellipse->mutable_center()->set_x(trackerRelativeProjection.shape.ellipse.center.x);
-                            ellipse->mutable_center()->set_y(trackerRelativeProjection.shape.ellipse.center.y);
-                            ellipse->set_half_x_extent(trackerRelativeProjection.shape.ellipse.half_x_extent);
-                            ellipse->set_half_y_extent(trackerRelativeProjection.shape.ellipse.half_y_extent);
-                            ellipse->set_angle(trackerRelativeProjection.shape.ellipse.angle);
+                                ellipse->mutable_center()->set_x(trackerRelativeProjection.shape.ellipse.center.x);
+                                ellipse->mutable_center()->set_y(trackerRelativeProjection.shape.ellipse.center.y);
+                                ellipse->set_half_x_extent(trackerRelativeProjection.shape.ellipse.half_x_extent);
+                                ellipse->set_half_y_extent(trackerRelativeProjection.shape.ellipse.half_y_extent);
+                                ellipse->set_angle(trackerRelativeProjection.shape.ellipse.angle);
+                            }
+                            else if (positionEstimate->projection.projection_type == eCommonTrackingProjectionType::ProjectionType_Points)
+                            {
+					            PSMoveProtocol::Polygon *polygon = raw_tracker_data->add_projected_point_clouds();
+
+					            for (int vert_index = 0; vert_index < trackerRelativeProjection.shape.points.point_count; ++vert_index)
+					            {
+						            PSMoveProtocol::Pixel *pixel = polygon->add_vertices();
+
+						            pixel->set_x(trackerRelativeProjection.shape.points.point[vert_index].x);
+						            pixel->set_y(trackerRelativeProjection.shape.points.point[vert_index].y);
+					            }
+                            }
 
 				            // Project the 3d camera position back onto the tracker screen
 					        const CommonDeviceScreenLocation trackerScreenLocation =
