@@ -7,6 +7,7 @@
 #include "USBDeviceRequest.h"
 #include "USBDeviceManager.h"
 
+#define ENABLE_LOGGING
 #include "libusb.h"
 
 #include <assert.h>
@@ -44,7 +45,7 @@ LibUSBApi::~LibUSBApi()
 bool LibUSBApi::startup()
 {
 	libusb_init(&m_apiContext->lib_usb_context);
-	libusb_set_debug(m_apiContext->lib_usb_context, 1);
+	libusb_set_debug(m_apiContext->lib_usb_context, LIBUSB_LOG_LEVEL_ERROR);
 
 	return true;
 }
@@ -101,6 +102,35 @@ bool LibUSBApi::device_enumerator_get_filter(const USBDeviceEnumerator* enumerat
 
 		outDeviceInfo->product_id = dev_desc.idProduct;
 		outDeviceInfo->vendor_id = dev_desc.idVendor;
+
+        outDeviceInfo->interface_mask= 0;
+        for (int config_index = 0; config_index < dev_desc.bNumConfigurations; ++config_index)
+        {
+            libusb_config_descriptor *config;
+
+            if (libusb_get_config_descriptor(const_cast<libusb_device *>(dev), config_index, &config) == LIBUSB_SUCCESS)
+            {
+                for(int int_index=0; int_index < (int)config->bNumInterfaces; int_index++) 
+                {
+                    const libusb_interface *config_interface= &config->interface[int_index];
+
+                    for (int alt_index = 0; alt_index < (int)config_interface->num_altsetting; ++alt_index)
+                    {
+                        const struct libusb_interface_descriptor *interface_desc= &config_interface->altsetting[alt_index];
+                        const int interface_id= (int)interface_desc->bInterfaceNumber;
+
+
+                        if (interface_id >= 0 && interface_id < 32)
+                        {
+                            outDeviceInfo->interface_mask|= (1 << interface_id);
+                        }
+                    }
+                }
+
+                libusb_free_config_descriptor(config);
+            }
+        }
+
 		bSuccess = true;
 	}
 

@@ -282,6 +282,16 @@ bool WinUSBApi::device_enumerator_get_filter(const USBDeviceEnumerator* enumerat
 	{
 		outDeviceInfo->product_id = winusb_enumerator->getProductId();
 		outDeviceInfo->vendor_id = winusb_enumerator->getVendorId();
+
+        int interface_index= winusb_enumerator->getCompositeInterfaceIndex();
+        if (interface_index >= 0 && interface_index < 32)
+        {
+            outDeviceInfo->interface_mask= (1 << interface_index);
+        }
+        else
+        {
+            outDeviceInfo->interface_mask= 0;
+        }
 		bSuccess = true;
 	}
 
