@@ -19,7 +19,7 @@
 #include <math.h>
 
 //-- constants -----
-#define BULK_TRANSFER_TIMEOUT	  500 /* timeout in ms */
+#define INTERRUPT_TRANSFER_TIMEOUT	  500 /* timeout in ms */
 
 #define MORPHEUS_VENDOR_ID 0x054c
 #define MORPHEUS_PRODUCT_ID 0x09af
@@ -29,10 +29,6 @@
 
 #define MORPHEUS_SENSOR_INTERFACE 4
 #define MORPHEUS_COMMAND_INTERFACE 5
-
-#define MORPHEUS_USB_INTERFACES_MASK_TO_CLAIM ( \
-	 \
-)
 
 #define MORPHEUS_COMMAND_MAGIC 0xAA
 #define MORPHEUS_COMMAND_MAX_PAYLOAD_LEN 60
@@ -414,6 +410,12 @@ bool MorpheusHMD::open(
     else
     {
 		SERVER_LOG_INFO("MorpheusHMD::open") << "Opening MorpheusHMD(" << cur_dev_path << ").";
+
+
+		// Load the config file
+		std::string config_name("MorpheusHMDConfig");
+		cfg = MorpheusHMDConfig(config_name);
+        cfg.load();
 
 		USBContext->device_identifier = cur_dev_path;
 
@@ -849,9 +851,11 @@ static bool morpheus_send_command(
 	MorpheusUSBContext *morpheus_context,
 	MorpheusCommand &command)
 {
+    bool bSuccess= false;
+
 	if (morpheus_context->usb_device_handle != k_invalid_usb_device_handle)
 	{
-        const int endpointAddress = 0x80;
+        const int endpointAddress = 0x84;
 		//const int endpointAddress =
 		//	(morpheus_context->usb_device_descriptor->interface[MORPHEUS_COMMAND_INTERFACE]
 		//		.altsetting[0]
@@ -862,33 +866,33 @@ static bool morpheus_send_command(
 	    int result = 0;
 
 	    USBTransferRequest transfer_request;
-	    transfer_request.request_type = _USBRequestType_BulkTransfer;
+	    transfer_request.request_type = _USBRequestType_InterruptTransfer;
 
-	    USBRequestPayload_BulkTransfer &bulk_transfer = transfer_request.payload.bulk_transfer;
-	    bulk_transfer.usb_device_handle = morpheus_context->usb_device_handle;
-	    bulk_transfer.endpoint = endpointAddress;
-	    bulk_transfer.length = static_cast<unsigned int>(command_length);
-	    bulk_transfer.timeout = BULK_TRANSFER_TIMEOUT;
+	    USBRequestPayload_InterruptTransfer &interrupt_transfer = transfer_request.payload.interrupt_transfer;
+	    interrupt_transfer.usb_device_handle = morpheus_context->usb_device_handle;
+	    interrupt_transfer.endpoint = endpointAddress;
+	    interrupt_transfer.length = static_cast<unsigned int>(command_length);
+	    interrupt_transfer.timeout = INTERRUPT_TRANSFER_TIMEOUT;
 
 		static_assert(sizeof(transfer_request.payload.bulk_transfer.data) >= sizeof(MorpheusCommand), "bulk_transfer max payload too small for MorpheusCommand");
 		memcpy(transfer_request.payload.interrupt_transfer.data, (unsigned char *)&command, command_length);
 
 	    USBTransferResult transfer_result = usb_device_submit_transfer_request_blocking(transfer_request);
-	    assert(transfer_result.result_type == _USBResultType_BulkTransfer);
+	    assert(transfer_result.result_type == _USBRequestType_InterruptTransfer);
 
-	    if (transfer_result.payload.bulk_transfer.result_code == _USBResultCode_Completed)
+	    if (transfer_result.payload.interrupt_transfer.result_code == _USBResultCode_Completed)
 	    {
-		    result = transfer_result.payload.bulk_transfer.dataLength;
+		    result = transfer_result.payload.interrupt_transfer.dataLength;
+            bSuccess= true;
 	    }
 	    else
 	    {
-		    const char * error_text = usb_device_get_error_string(transfer_result.payload.bulk_transfer.result_code);
-		    SERVER_LOG_ERROR("morpheus_send_command") << "bulk transfer failed with error: " << error_text;
+		    const char * error_text = usb_device_get_error_string(transfer_result.payload.interrupt_transfer.result_code);
+		    SERVER_LOG_ERROR("morpheus_send_command") << "interrupt transfer failed with error: " << error_text;
 		    result = -static_cast<int>(transfer_result.payload.interrupt_transfer.result_code);
 	    }
 	}
-	else
-	{
-		return false;
-	}
+
+
+    return bSuccess;
 }
