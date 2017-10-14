@@ -749,6 +749,10 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
                                                ITrackerInterface::eTrackerVideoSection section,
                                                cv::Matx33f &intrinsicOut,
                                                cv::Matx<float, 5, 1> &distortionOut);
+static bool computeOpenCVCameraRectification(const ITrackerInterface *tracker_device,
+                                               ITrackerInterface::eTrackerVideoSection section,
+                                               cv::Matx33d &rotationOut,
+                                               cv::Matx34d &projectionOut);
 static cv::Matx34f computeOpenCVCameraPinholeMatrix(const ITrackerInterface *tracker_device,
                                                     ITrackerInterface::eTrackerVideoSection section);
 static bool computeTrackerRelativeLightBarProjectionForSection(
@@ -1420,7 +1424,10 @@ ServerTrackerView::computeProjectionForControllerInSection(
         // Needed for undistortion.
         cv::Matx33f camera_matrix;
         cv::Matx<float, 5, 1> distortions;
+        cv::Matx33d rectification_rotation;
+        cv::Matx34d rectification_projection; 
         computeOpenCVCameraIntrinsicMatrix(m_device, section, camera_matrix, distortions);
+        bool valid_rectification= computeOpenCVCameraRectification(m_device, section, rectification_rotation, rectification_projection);
                 
         // Compute the tracker relative 3d position of the controller from the contour
         switch (tracking_shape->shape_type)
@@ -1439,11 +1446,20 @@ ServerTrackerView::computeProjectionForControllerInSection(
 
                 // Undistort points
                 t_opencv_float_contour undistort_contour;  //destination for undistorted contour
-                cv::undistortPoints(convex_contour_f, undistort_contour,
-                                    camera_matrix,
-                                    distortions);//,
-                                    //cv::noArray(),
-                                    //camera_matrix);
+                if (valid_rectification)
+                {
+                    cv::undistortPoints(convex_contour_f, undistort_contour,
+                                        camera_matrix,
+                                        distortions,
+                                        rectification_rotation,
+                                        rectification_projection);
+                }
+                else 
+                {
+                    cv::undistortPoints(convex_contour_f, undistort_contour,
+                                        camera_matrix,
+                                        distortions);
+                }
                 // Note: if we omit the last two arguments, then
                 // undistort_contour points are in 'normalized' space.
                 // i.e., they are relative to their F_PX,F_PY
@@ -1511,11 +1527,22 @@ ServerTrackerView::computeProjectionForControllerInSection(
 
                 // Compute an undistorted version of the contour
                 t_opencv_float_contour undistort_contour;
-                cv::undistortPoints(biggest_contour_f, undistort_contour,
-                                    camera_matrix,
-                                    distortions,
-                                    cv::noArray(),
-                                    camera_matrix);
+                if (valid_rectification)
+                {
+                    cv::undistortPoints(biggest_contour_f, undistort_contour,
+                                        camera_matrix,
+                                        distortions,
+                                        rectification_rotation,
+                                        rectification_projection);
+                }
+                else 
+                {
+                    cv::undistortPoints(biggest_contour_f, undistort_contour,
+                                        camera_matrix,
+                                        distortions,
+                                        cv::noArray(),
+                                        camera_matrix);
+                }
 
                 // Compute the lightbar tracking projection from the undistored contour
                 bSuccess=
@@ -1583,6 +1610,7 @@ bool ServerTrackerView::computeProjectionForHMD(
 	        //7) Use SICP::point_to_plane to align model points to triangulated curve points
 		       // a. Use previous frames best fit model as a starting point
 	        //8) Use RigidMotionEstimator::point_to_point(X, U) to find the transform that best aligned the model points with the curve points
+            bSuccess= true;
         }
     }
     else
@@ -1658,7 +1686,10 @@ ServerTrackerView::computeProjectionForHmdInSection(
     {
         cv::Matx33f camera_matrix;
         cv::Matx<float, 5, 1> distortions;
+        cv::Matx33d rectification_rotation;
+        cv::Matx34d rectification_projection; 
         computeOpenCVCameraIntrinsicMatrix(m_device, section, camera_matrix, distortions);
+        bool valid_rectification= computeOpenCVCameraRectification(m_device, section, rectification_rotation, rectification_projection);
 
         switch (tracking_shape->shape_type)
         {
@@ -1676,11 +1707,22 @@ ServerTrackerView::computeProjectionForHmdInSection(
 
                 // Undistort points
                 t_opencv_float_contour undistorted_contour;  //destination for undistorted contour
-                cv::undistortPoints(convex_contour_f, undistorted_contour,
-                                    camera_matrix,
-                                    distortions);//,
-                                    //cv::noArray(),
-                                    //camera_matrix);
+                if (valid_rectification)
+                {
+                    cv::undistortPoints(convex_contour_f, undistorted_contour,
+                                        camera_matrix,
+                                        distortions,
+                                        rectification_rotation,
+                                        rectification_projection);
+                }
+                else 
+                {
+                    cv::undistortPoints(convex_contour_f, undistorted_contour,
+                                        camera_matrix,
+                                        distortions,
+                                        cv::noArray(),
+                                        camera_matrix);
+                }
                 // Note: if we omit the last two arguments, then
                 // undistort_contour points are in 'normalized' space.
                 // i.e., they are relative to their F_PX,F_PY
@@ -1753,11 +1795,22 @@ ServerTrackerView::computeProjectionForHmdInSection(
 
                     // Compute an undistorted version of the contour
                     t_opencv_float_contour undistort_contour;
-                    cv::undistortPoints(biggest_contour_f, undistort_contour,
-                        camera_matrix,
-                        distortions,
-                        cv::noArray(),
-                        camera_matrix);
+                    if (valid_rectification)
+                    {
+                        cv::undistortPoints(biggest_contour_f, undistort_contour,
+                                            camera_matrix,
+                                            distortions,
+                                            rectification_rotation,
+                                            rectification_projection);
+                    }
+                    else 
+                    {
+                        cv::undistortPoints(biggest_contour_f, undistort_contour,
+                                            camera_matrix,
+                                            distortions,
+                                            cv::noArray(),
+                                            camera_matrix);
+                    }
 
                     undistorted_contours.push_back(biggest_contour_f);
                 }
@@ -2255,9 +2308,9 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
     {
         std::array<double, 3*3> &m= *camera_matrix;
    
-        // Fill the rest of the matrix with corrext values.
+        // Fill the rest of the matrix with correct values.
         //Negate F_PY because the screen coordinate system has +Y down.
-        intrinsicOut(0, 0)= (float)m[0]; intrinsicOut(0, 1)=  (float)m[1]; intrinsicOut(0, 1)= (float)m[2];
+        intrinsicOut(0, 0)= (float)m[0]; intrinsicOut(0, 1)=  (float)m[1]; intrinsicOut(0, 2)= (float)m[2];
         intrinsicOut(1, 0)= (float)m[3]; intrinsicOut(1, 1)= -(float)m[4]; intrinsicOut(1, 2)= (float)m[5]; 
         intrinsicOut(2, 0)= (float)m[6]; intrinsicOut(2, 1)= (float)m[7];  intrinsicOut(2, 2)= (float)m[8];
 
@@ -2266,6 +2319,52 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
         distortionOut(2, 0)= (float)distortion_coefficients->p1;
         distortionOut(3, 0)= (float)distortion_coefficients->p2;
         distortionOut(4, 0)= (float)distortion_coefficients->k3;
+    }
+}
+
+static bool computeOpenCVCameraRectification(const ITrackerInterface *tracker_device,
+                                               ITrackerInterface::eTrackerVideoSection section,
+                                               cv::Matx33d &rotationOut,
+                                               cv::Matx34d &projectionOut)
+{
+    CommonTrackerIntrinsics tracker_intrinsics;
+    tracker_device->getCameraIntrinsics(tracker_intrinsics);
+
+    std::array<double, 3*3> *rectification_rotation= nullptr;
+    std::array<double, 3*4> *rectification_projection= nullptr;
+
+    if (tracker_intrinsics.intrinsics_type == CommonTrackerIntrinsics::STEREO_TRACKER_INTRINSICS)
+    {
+        if (section == ITrackerInterface::LeftSection)
+        {
+            rectification_rotation= &tracker_intrinsics.stereo_intrinsics.left_rectification_rotation;
+            rectification_projection= &tracker_intrinsics.stereo_intrinsics.left_rectification_projection;
+        }
+        else if (section == ITrackerInterface::RightSection)
+        {
+            rectification_rotation= &tracker_intrinsics.stereo_intrinsics.right_rectification_rotation;
+            rectification_projection= &tracker_intrinsics.stereo_intrinsics.right_rectification_projection;
+        }
+    }
+
+    if (rectification_rotation != nullptr && rectification_projection != nullptr)
+    {
+        std::array<double, 3*3> &r= *rectification_rotation;
+        std::array<double, 3*4> &p= *rectification_projection;
+   
+        rotationOut(0, 0)= (float)r[0]; rotationOut(0, 1)= (float)r[1]; rotationOut(0, 2)= (float)r[2];
+        rotationOut(1, 0)= (float)r[3]; rotationOut(1, 1)= (float)r[4]; rotationOut(1, 2)= (float)r[5]; 
+        rotationOut(2, 0)= (float)r[6]; rotationOut(2, 1)= (float)r[7]; rotationOut(2, 2)= (float)r[8];
+
+        projectionOut(0, 0)= (float)p[0]; projectionOut(0, 1)= (float)p[1]; projectionOut(0, 2)= (float)p[2]; projectionOut(0, 3)= (float)p[3];
+        projectionOut(1, 0)= (float)p[4]; projectionOut(1, 1)= (float)p[5]; projectionOut(1, 2)= (float)p[6]; projectionOut(1, 3)= (float)p[7]; 
+        projectionOut(2, 0)= (float)p[8]; projectionOut(2, 1)= (float)p[9]; projectionOut(2, 2)= (float)p[10]; projectionOut(2, 3)= (float)p[11];
+
+        return true;
+    }
+    else
+    {
+        return false;
     }
 }
 
