@@ -35,6 +35,11 @@ namespace SICP
 	typedef Eigen::Matrix<double, 3, Eigen::Dynamic> Vertices;
 };
 
+namespace cv
+{
+    typedef Matx<double, 5, 1> Matx51d;
+}
+
 //-- statics ----
 const char *AppStage_HMDModelCalibration::APP_STAGE_NAME = "HMDModelCalibration";
 
@@ -61,21 +66,167 @@ static PSMVector2f projectTrackerRelativePositionOnTracker(
 static void drawHMD(PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform);
 
 //-- private structures -----
+struct StereoCameraSectionState
+{
+    // Raw video buffer
+    int frameWidth;
+    int frameHeight;
+	TextureAsset *textureAsset;
+
+    // Stereo Calibration state
+    cv::Matx33d intrinsic_matrix;
+    cv::Matx33d rectification_rotation;
+    cv::Matx34d rectification_projection;
+    cv::Matx51d distortion_coeffs;
+
+    // Distortion preview
+    cv::Mat *distortionMapX;
+    cv::Mat *distortionMapY;
+    cv::Mat *bgrUndistortBuffer;
+
+    void init()
+    {
+        frameWidth= frameHeight = 0;
+        textureAsset = nullptr;
+        bgrUndistortBuffer = nullptr;
+        distortionMapX = nullptr;
+        distortionMapY = nullptr;
+    }
+
+    void dispose()
+    {
+        if (textureAsset != nullptr)
+        {
+            delete textureAsset;
+            textureAsset= nullptr;
+        }
+
+        if (bgrUndistortBuffer != nullptr)
+        {
+            delete bgrUndistortBuffer;
+            bgrUndistortBuffer= nullptr;
+        }
+
+        if (distortionMapX != nullptr)
+        {
+            delete distortionMapX;
+            distortionMapX= nullptr;
+        }
+
+        if (distortionMapY != nullptr)
+        {
+            delete distortionMapY;
+            distortionMapY= nullptr;
+        }
+    }
+
+    void applyIntrinsics(const PSMTrackerIntrinsics &intrinsics, const PSMVideoFrameSection section_index)
+    {
+        frameWidth= static_cast<int>(intrinsics.intrinsics.stereo.pixel_width);
+        frameHeight= static_cast<int>(intrinsics.intrinsics.stereo.pixel_height);
+
+        switch (section_index)
+        {
+        case PSMVideoFrameSection_Left:
+            intrinsic_matrix= psmove_matrix3x3_to_cv_mat33d(intrinsics.intrinsics.stereo.left_camera_matrix);
+            rectification_rotation= psmove_matrix3x3_to_cv_mat33d(intrinsics.intrinsics.stereo.left_rectification_rotation);
+            rectification_projection= psmove_matrix3x4_to_cv_mat34d(intrinsics.intrinsics.stereo.left_rectification_projection);
+            distortion_coeffs= psm_distortion_to_cv_vec5(intrinsics.intrinsics.stereo.left_distortion_coefficients);
+            break;
+        case PSMVideoFrameSection_Right:
+            intrinsic_matrix= psmove_matrix3x3_to_cv_mat33d(intrinsics.intrinsics.stereo.right_camera_matrix);
+            rectification_rotation= psmove_matrix3x3_to_cv_mat33d(intrinsics.intrinsics.stereo.right_rectification_rotation);
+            rectification_projection= psmove_matrix3x4_to_cv_mat34d(intrinsics.intrinsics.stereo.right_rectification_projection);
+            distortion_coeffs= psm_distortion_to_cv_vec5(intrinsics.intrinsics.stereo.right_distortion_coefficients);
+            break;
+        default:
+            break;
+        }
+
+        // Clean up any previously allocated buffers
+        dispose();
+
+        // Create a texture to render the video frame to
+        textureAsset = new TextureAsset();
+        textureAsset->init(
+            frameWidth, frameHeight,
+            GL_RGB, // texture format
+            GL_BGR, // buffer format
+            nullptr);
+
+        bgrUndistortBuffer = new cv::Mat(frameHeight, frameWidth, CV_8UC3);
+        distortionMapX = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
+        distortionMapY = new cv::Mat(cv::Size(frameWidth, frameHeight), CV_32FC1);
+
+        cv::initUndistortRectifyMap(
+            intrinsic_matrix, distortion_coeffs, 
+            rectification_rotation, rectification_projection, 
+            cv::Size(frameWidth, frameHeight),
+            CV_32FC1, // Distortion map type
+            *distortionMapX, *distortionMapY);
+    }
+
+    inline cv::Matx51d psm_distortion_to_cv_vec5(const PSMDistortionCoefficients &distortion_coeffs)
+    {
+        cv::Matx51d cv_distortion_coeffs;
+        cv_distortion_coeffs(0, 0)= distortion_coeffs.k1;
+        cv_distortion_coeffs(1, 0)= distortion_coeffs.k2;
+        cv_distortion_coeffs(2, 0)= distortion_coeffs.p1;
+        cv_distortion_coeffs(3, 0)= distortion_coeffs.p2;
+        cv_distortion_coeffs(4, 0)= distortion_coeffs.k3;
+
+        return cv_distortion_coeffs;
+    }
+
+    void applyVideoFrame(const unsigned char *buffer)
+    {
+        const cv::Mat bgrSourceBuffer(frameHeight, frameWidth, CV_8UC3, const_cast<unsigned char *>(buffer));
+
+        // Apply the distortion map
+        cv::remap(
+            bgrSourceBuffer, *bgrUndistortBuffer, 
+            *distortionMapX, *distortionMapY, 
+            cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+
+        // Copy undistorted buffer into texture
+        textureAsset->copyBufferIntoTexture(bgrUndistortBuffer->data);
+    }
+};
+
 struct StereoCameraState
 {
 	PSMTracker *trackerView;
-	class TextureAsset *leftTextureAsset;
-    class TextureAsset *rightTextureAsset;
+    StereoCameraSectionState sections[2];
 
+    // Stereo Calibration state
 	Eigen::Matrix3f F_ab; // Fundamental matrix from left to right tracker frame
     Eigen::Matrix4d Q; // Reprojection matrix
 	float tolerance;
 
 	void init()
 	{
+        trackerView= nullptr;
+        sections[PSMVideoFrameSection_Left].init();
+        sections[PSMVideoFrameSection_Right].init();
 		memset(this, 0, sizeof(StereoCameraState));
 		tolerance = k_default_correspondance_tolerance;
 	}
+
+    void applyIntrinsics(const PSMTrackerIntrinsics &intrinsics)
+    {
+        sections[PSMVideoFrameSection_Left].applyIntrinsics(intrinsics, PSMVideoFrameSection_Left);
+        sections[PSMVideoFrameSection_Right].applyIntrinsics(intrinsics, PSMVideoFrameSection_Right);
+
+        F_ab= psm_matrix3d_to_eigen_matrix3f(intrinsics.intrinsics.stereo.fundamental_matrix);
+        Q= psm_matrix4d_to_eigen_matrix4d(intrinsics.intrinsics.stereo.reprojection_matrix);
+
+    }
+
+    void dispose()
+    {
+        sections[PSMVideoFrameSection_Left].dispose();
+        sections[PSMVideoFrameSection_Right].dispose();
+    }
 
 	bool do_points_correspond(
 		const cv::Mat &pointA,
@@ -855,7 +1006,7 @@ void AppStage_HMDModelCalibration::update_tracker_video()
                 PSMVideoFrameSection_Left, 
                 &buffer) == PSMResult_Success)
 		{
-			m_stereoTrackerState->leftTextureAsset->copyBufferIntoTexture(buffer);
+            m_stereoTrackerState->sections[PSMVideoFrameSection_Left].applyVideoFrame(buffer);
 		}
 
 		if (PSM_GetTrackerVideoFrameBuffer(
@@ -863,20 +1014,20 @@ void AppStage_HMDModelCalibration::update_tracker_video()
                 PSMVideoFrameSection_Right, 
                 &buffer) == PSMResult_Success)
 		{
-			m_stereoTrackerState->rightTextureAsset->copyBufferIntoTexture(buffer);
+			m_stereoTrackerState->sections[PSMVideoFrameSection_Right].applyVideoFrame(buffer);
 		}
 	}
 }
 
 void AppStage_HMDModelCalibration::render_tracker_video()
 {
-	if (m_stereoTrackerState->leftTextureAsset != nullptr &&
-        m_stereoTrackerState->rightTextureAsset != nullptr)
-	{
-		drawFullscreenStereoTexture(
-            m_stereoTrackerState->leftTextureAsset->texture_id, 
-            m_stereoTrackerState->rightTextureAsset->texture_id);
-	}
+    if (m_stereoTrackerState->sections[PSMVideoFrameSection_Left].textureAsset != nullptr &&
+        m_stereoTrackerState->sections[PSMVideoFrameSection_Left].textureAsset != nullptr)
+    {
+        drawFullscreenStereoTexture(
+            m_stereoTrackerState->sections[PSMVideoFrameSection_Left].textureAsset->texture_id, 
+            m_stereoTrackerState->sections[PSMVideoFrameSection_Right].textureAsset->texture_id);
+    }
 }
 
 void AppStage_HMDModelCalibration::release_devices()
@@ -901,15 +1052,7 @@ void AppStage_HMDModelCalibration::release_devices()
 
 	if (m_stereoTrackerState != nullptr)
 	{
-		if (m_stereoTrackerState->leftTextureAsset != nullptr)
-		{
-			delete m_stereoTrackerState->leftTextureAsset;
-		}
-
-		if (m_stereoTrackerState->rightTextureAsset != nullptr)
-		{
-			delete m_stereoTrackerState->rightTextureAsset;
-		}
+		m_stereoTrackerState->dispose();
 
 		if (m_stereoTrackerState->trackerView != nullptr)
 		{
@@ -1021,8 +1164,7 @@ void AppStage_HMDModelCalibration::request_start_hmd_stream(int HmdID)
 	PSM_StartHmdDataStreamAsync(
 		HmdID, 
 		PSMStreamFlags_includePositionData |
-		PSMStreamFlags_includeCalibratedSensorData | 
-		PSMStreamFlags_includeRawSensorData |
+        PSMStreamFlags_includeRawTrackerData |
 		PSMStreamFlags_disableROI, 
 		&requestId);
 	PSM_RegisterCallback(requestId, &AppStage_HMDModelCalibration::handle_start_hmd_response, this);
@@ -1101,51 +1243,46 @@ void AppStage_HMDModelCalibration::handle_tracker_list_response(
 
 bool AppStage_HMDModelCalibration::setup_stereo_tracker(const PSMTrackerList &tracker_list)
 {
-	bool bSuccess = true;
+    bool bSuccess = true;
 
-	// Find the first stereo camera
-	if (bSuccess)
-	{
+    // Find the first stereo camera
+    if (bSuccess)
+    {
         int stereo_tracker_index= -1;
-		for (int tracker_index = 0; tracker_index < tracker_list.count; ++tracker_index)
-		{
-			const PSMClientTrackerInfo *tracker_info = &tracker_list.trackers[tracker_index];
+        for (int tracker_index = 0; tracker_index < tracker_list.count; ++tracker_index)
+        {
+            const PSMClientTrackerInfo *tracker_info = &tracker_list.trackers[tracker_index];
 
             if (tracker_info->tracker_intrinsics.intrinsics_type == PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS)
             {
                 stereo_tracker_index= tracker_index;
                 break;
             }
-		}
+        }
 
-		if (stereo_tracker_index != -1)
-		{
-			const PSMClientTrackerInfo *tracker_info = &tracker_list.trackers[stereo_tracker_index];
+        if (stereo_tracker_index != -1)
+        {
+            const PSMClientTrackerInfo *tracker_info = &tracker_list.trackers[stereo_tracker_index];
+            const PSMTrackerIntrinsics &intrinsics= tracker_info->tracker_intrinsics;
 
-			// Get the fundamental matrix for the tracker
-            PSMTrackerIntrinsics intrinsics;
-	        PSM_GetTrackerIntrinsics(tracker_info->tracker_id, &intrinsics);
-			m_stereoTrackerState->F_ab= psm_matrix3d_to_eigen_matrix3f(intrinsics.intrinsics.stereo.fundamental_matrix);
-            m_stereoTrackerState->Q= psm_matrix4d_to_eigen_matrix4d(intrinsics.intrinsics.stereo.reprojection_matrix);
+            // Allocate tracker view for the stereo camera
+            PSM_AllocateTrackerListener(tracker_info->tracker_id, tracker_info);
 
-			// Allocate tracker view for the stereo camera
-			PSM_AllocateTrackerListener(tracker_info->tracker_id, tracker_info);
-
-			m_stereoTrackerState->trackerView= PSM_GetTracker(tracker_info->tracker_id);
-			m_stereoTrackerState->leftTextureAsset= nullptr;
-			m_stereoTrackerState->rightTextureAsset= nullptr;
+            m_stereoTrackerState->init();
+            m_stereoTrackerState->applyIntrinsics(intrinsics);
+            m_stereoTrackerState->trackerView= PSM_GetTracker(tracker_info->tracker_id);
 
             // Start streaming tracker video
             request_tracker_start_stream(m_stereoTrackerState->trackerView);
-		}
-		else
-		{
-			m_failureDetails = "Can't find stereo camera!";
-			bSuccess = false;
-		}
-	}
+        }
+        else
+        {
+            m_failureDetails = "Can't find stereo camera!";
+            bSuccess = false;
+        }
+    }
 
-	return bSuccess;
+    return bSuccess;
 }
 
 void AppStage_HMDModelCalibration::request_tracker_start_stream(
@@ -1177,26 +1314,7 @@ void AppStage_HMDModelCalibration::handle_tracker_start_stream_response(
 
 		// Open the shared memory that the video stream is being written to
 		if (PSM_OpenTrackerVideoStream(tracker_id) == PSMResult_Success)
-		{
-            PSMVector2f screenSize;
-            PSM_GetTrackerScreenSize(tracker_id, &screenSize);
-
-			// Create a texture to render the video frame to
-			thisPtr->m_stereoTrackerState->leftTextureAsset = new TextureAsset();
-            thisPtr->m_stereoTrackerState->rightTextureAsset = new TextureAsset();
-			thisPtr->m_stereoTrackerState->leftTextureAsset->init(
-				static_cast<unsigned int>(screenSize.x),
-				static_cast<unsigned int>(screenSize.y),
-				GL_RGB, // texture format
-				GL_BGR, // buffer format
-				nullptr);
-			thisPtr->m_stereoTrackerState->rightTextureAsset->init(
-				static_cast<unsigned int>(screenSize.x),
-				static_cast<unsigned int>(screenSize.y),
-				GL_RGB, // texture format
-				GL_BGR, // buffer format
-				nullptr);
-    
+		{   
 			thisPtr->handle_all_devices_ready();
 		}
         else
@@ -1249,7 +1367,7 @@ static bool triangulateHMDProjections(
         PSMTrackerID selected_tracker_id= -1;
 
 		if (bIsTracking &&
-			PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, &selected_tracker_id, &trackingProjection))
+			PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, &selected_tracker_id, &trackingProjection) == PSMResult_Success)
 		{
 			assert(trackingProjection.shape_type == PSMShape_PointCloud);
             assert(trackingProjection.projection_count == STEREO_PROJECTION_COUNT);
@@ -1294,13 +1412,17 @@ static bool triangulateHMDProjections(
 
 						    // Get the triangulated 3d position
 						    const double w = homogeneusPoint.w();
-						    const Eigen::Vector3f triangulated_point(
-							    (float)(homogeneusPoint.x() / w),
-							    (float)(homogeneusPoint.y() / w),
-							    (float)(homogeneusPoint.z() / w));
 
-						    // Add to the list of world space points we saw this frame
-						    out_triangulated_points.push_back(triangulated_point);
+                            if (fabs(w) > k_real64_epsilon)
+                            {
+						        const Eigen::Vector3f triangulated_point(
+							        (float)(homogeneusPoint.x() / w),
+							        (float)(homogeneusPoint.y() / w),
+							        (float)(homogeneusPoint.z() / w));
+
+						        // Add to the list of world space points we saw this frame
+						        out_triangulated_points.push_back(triangulated_point);
+                            }
                         }
 
 						// Remove the point index from the set of indices to consider 
@@ -1350,7 +1472,7 @@ static PSMVector2f projectTrackerRelativePositionOnTracker(
 	std::vector<cv::Point2d> projectedPoints;
 	cv::projectPoints(cvObjectPoints, rvec, tvec, cvCameraMatrix, cvDistCoeffs, projectedPoints);
 
-	PSMVector2f screenLocation = {(float)projectedPoints[0].x, (float)projectedPoints[1].y};
+	PSMVector2f screenLocation = {(float)projectedPoints[0].x, (float)projectedPoints[0].y};
 
 	return screenLocation;
 }
