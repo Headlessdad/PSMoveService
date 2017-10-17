@@ -1794,10 +1794,10 @@ ServerTrackerView::computeProjectionForHmdInSection(
                     cv::Mat(*it).convertTo(biggest_contour_f, cv::Mat(biggest_contour_f).type());
 
                     // Compute an undistorted version of the contour
-                    t_opencv_float_contour undistort_contour;
+                    t_opencv_float_contour undistorted_contour;
                     if (valid_rectification)
                     {
-                        cv::undistortPoints(biggest_contour_f, undistort_contour,
+                        cv::undistortPoints(biggest_contour_f, undistorted_contour,
                                             camera_matrix,
                                             distortions,
                                             rectification_rotation,
@@ -1805,14 +1805,14 @@ ServerTrackerView::computeProjectionForHmdInSection(
                     }
                     else 
                     {
-                        cv::undistortPoints(biggest_contour_f, undistort_contour,
+                        cv::undistortPoints(biggest_contour_f, undistorted_contour,
                                             camera_matrix,
                                             distortions,
                                             cv::noArray(),
                                             camera_matrix);
                     }
 
-                    undistorted_contours.push_back(biggest_contour_f);
+                    undistorted_contours.push_back(undistorted_contour);
                 }
 
                 bSuccess =
@@ -2308,10 +2308,8 @@ static void computeOpenCVCameraIntrinsicMatrix(const ITrackerInterface *tracker_
     {
         std::array<double, 3*3> &m= *camera_matrix;
    
-        // Fill the rest of the matrix with correct values.
-        //Negate F_PY because the screen coordinate system has +Y down.
         intrinsicOut(0, 0)= (float)m[0]; intrinsicOut(0, 1)=  (float)m[1]; intrinsicOut(0, 2)= (float)m[2];
-        intrinsicOut(1, 0)= (float)m[3]; intrinsicOut(1, 1)= -(float)m[4]; intrinsicOut(1, 2)= (float)m[5]; 
+        intrinsicOut(1, 0)= (float)m[3]; intrinsicOut(1, 1)= (float)m[4]; intrinsicOut(1, 2)= (float)m[5]; 
         intrinsicOut(2, 0)= (float)m[6]; intrinsicOut(2, 1)= (float)m[7];  intrinsicOut(2, 2)= (float)m[8];
 
         distortionOut(0, 0)= (float)distortion_coefficients->k1;
@@ -2377,6 +2375,10 @@ static cv::Matx34f computeOpenCVCameraPinholeMatrix(
     cv::Matx33f intrinsic_matrix;
     cv::Matx<float, 5, 1> distortion;
     computeOpenCVCameraIntrinsicMatrix(tracker_device, section, intrinsic_matrix, distortion);
+
+    //Negate F_PY because the screen coordinate system has +Y down.
+    intrinsic_matrix(1, 1)= -intrinsic_matrix(1, 1);
+
     cv::Matx34f pinhole_matrix = intrinsic_matrix * extrinsic_matrix;
 
     return pinhole_matrix;

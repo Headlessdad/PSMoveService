@@ -973,7 +973,7 @@ inline void psm_distortion_to_protocol_distortion(
     PSMoveProtocol::TrackerIntrinsics_DistortionCoefficients *result)
 {
     result->set_k1(d.k1);
-    result->set_k3(d.k2);
+    result->set_k2(d.k2);
     result->set_k3(d.k3);
     result->set_p1(d.p1);
     result->set_p2(d.p2);

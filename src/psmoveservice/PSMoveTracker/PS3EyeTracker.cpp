@@ -50,10 +50,10 @@ PS3EyeTrackerConfig::PS3EyeTrackerConfig(const std::string &fnamebase)
     trackerIntrinsics.znear= 10.0; // cm
     trackerIntrinsics.zfar= 200.0; // cm
     trackerIntrinsics.distortion_coefficients.k1= -0.10771770030260086;
-    trackerIntrinsics.distortion_coefficients.k1= 0.1213262677192688;
-    trackerIntrinsics.distortion_coefficients.k1= 0.04875476285815239;
-    trackerIntrinsics.distortion_coefficients.k1= 0.00091733073350042105;
-    trackerIntrinsics.distortion_coefficients.k1= 0.00010589254816295579;
+    trackerIntrinsics.distortion_coefficients.k2= 0.1213262677192688;
+    trackerIntrinsics.distortion_coefficients.k3= 0.04875476285815239;
+    trackerIntrinsics.distortion_coefficients.p1= 0.00091733073350042105;
+    trackerIntrinsics.distortion_coefficients.p2= 0.00010589254816295579;
 
     pose.clear();
 

@@ -2438,7 +2438,7 @@ protected:
         CommonDistortionCoefficients &result)
     {
         result.k1= d.k1();
-        result.k3= d.k2();
+        result.k2= d.k2();
         result.k3= d.k3();
         result.p1= d.p1();
         result.p2= d.p2();
