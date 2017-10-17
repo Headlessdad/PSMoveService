@@ -5,6 +5,10 @@
 #include <algorithm>
 
 //-- constants -----
+
+const PSMVector2f g_psm_float_vector2_zero= {0.f, 0.f};
+const PSMVector2f *k_psm_float_vector2_zero= &g_psm_float_vector2_zero;
+
 const PSMVector3f g_psm_float_vector3_zero= {0.f, 0.f, 0.f};
 const PSMVector3f *k_psm_float_vector3_zero= &g_psm_float_vector3_zero;
 
@@ -113,7 +117,19 @@ float PSM_Vector2fMaxValue(const PSMVector2f *v)
 
 float PSM_Vector2fDot(const PSMVector2f *a, const PSMVector2f *b)
 {
-	return a->x*b->x + a->x*b->y;
+	return a->x*b->x + a->y*b->y;
+}
+
+float PSM_Vector2fDistanceSquared(const PSMVector2f *a, const PSMVector2f *b)
+{
+    PSMVector2f diff= PSM_Vector2fSubtract(a, b);
+
+    return PSM_Vector2fDot(&diff, &diff);
+}
+
+float PSM_Vector2fDistance(const PSMVector2f *a, const PSMVector2f *b)
+{
+    return sqrtf(PSM_Vector2fDistanceSquared(a, b));
 }
 
 PSMVector2f PSM_Vector2fMin(const PSMVector2f *a, const PSMVector2f *b)

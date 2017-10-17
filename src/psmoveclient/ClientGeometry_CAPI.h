@@ -110,6 +110,13 @@ typedef struct
 	float zFar; 			///< far place distance of frustum, in cm
 } PSMFrustum;
 
+typedef enum 
+{
+	TRIANGLE_POINT_COUNT = 3,
+	QUAD_POINT_COUNT = 4,
+	MAX_POINT_CLOUD_POINT_COUNT= 9
+} PSMTrackingShapeConstants;
+
 typedef struct
 {
     union{
@@ -120,11 +127,11 @@ typedef struct
             float angle;
         } ellipse;
         struct {
-            PSMVector2f triangle[3];
-			PSMVector2f quad[4];
+            PSMVector2f triangle[TRIANGLE_POINT_COUNT];
+			PSMVector2f quad[QUAD_POINT_COUNT];
         } lightbar;
 		struct {
-			PSMVector2f points[7];
+			PSMVector2f points[MAX_POINT_CLOUD_POINT_COUNT];
 			int point_count;
 		} pointcloud;
     } shape;
@@ -195,6 +202,10 @@ PSM_PUBLIC_FUNCTION(float) PSM_Vector2fMinValue(const PSMVector2f *v);
 PSM_PUBLIC_FUNCTION(float) PSM_Vector2fMaxValue(const PSMVector2f *v);
 /// Computes the 2D dot product of two vectors
 PSM_PUBLIC_FUNCTION(float) PSM_Vector2fDot(const PSMVector2f *a, const PSMVector2f *b);
+/// Computes the 2D squared distance between two vectors
+PSM_PUBLIC_FUNCTION(float) PSM_Vector2fDistanceSquared(const PSMVector2f *a, const PSMVector2f *b);
+/// Computes the 2D squared between two vectors
+PSM_PUBLIC_FUNCTION(float) PSM_Vector2fDistance(const PSMVector2f *a, const PSMVector2f *b);
 /// Computes the min value of two vectors along each component
 PSM_PUBLIC_FUNCTION(PSMVector2f) PSM_Vector2fMin(const PSMVector2f *a, const PSMVector2f *b);
 /// Computes the max value of two vectors along each component
@@ -354,6 +365,8 @@ PSM_PUBLIC_FUNCTION(void) PSM_FrustumSetPose(PSMFrustum *frustum, const PSMPosef
 PSM_PUBLIC_FUNCTION(float) PSM_TrackingProjectionGetArea(const PSMTrackingProjection *proj, const PSMTrackingProjectionCount area_index);
 
 //-- constants -----
+/// A 2D float vector whose components are all 0.0f
+PSM_PUBLIC_CLASS extern const PSMVector2f *k_psm_float_vector2_zero;
 /// A 3D integer vector whose components are all 0
 PSM_PUBLIC_CLASS extern const PSMVector3i *k_psm_int_vector3_zero;
 /// A 3D float vector whose components are all 0.0f
