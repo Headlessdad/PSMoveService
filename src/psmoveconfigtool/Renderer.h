@@ -79,8 +79,20 @@ private:
 };
 
 //-- drawing methods -----
+PSMVector2f remapPointIntoSubWindow(
+    const float screenWidth, const float screenHeight,
+    const float windowLeft, const float windowTop,
+    const float windowRight, const float windowBottom,
+    const PSMVector2f &in_point);
+glm::vec3 remapPointIntoSubWindow(
+    const float screenWidth, const float screenHeight,
+    const float windowLeft, const float windowTop,
+    const float windowRight, const float windowBottom,
+    const glm::vec3 &in_point);
 void drawArrow(const glm::mat4 &transform, const glm::vec3 &start, const glm::vec3 &end, const float headFraction, const glm::vec3 &color);
 void drawTextAtWorldPosition(const glm::mat4 &transform, const glm::vec3 &position, const char *format, ...) RENDERER_PRINTFARGS(3);
+void drawTextAtScreenPosition(const glm::vec3 &screenCoords, const char *format, ...) RENDERER_PRINTFARGS(2);
+void drawZeroTerminatedTextAtScreenPosition(const glm::vec3 &screenCoords, const char *text);
 void drawFullscreenTexture(const unsigned int texture_id);
 void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsigned int right_texture_id);
 void drawPointCloudProjection(
@@ -105,6 +117,10 @@ void drawEllipsoid(
     const glm::mat3 &basis, const glm::vec3 &center, const glm::vec3 &extents,
     const int subdiv= 64);
 void drawLineStrip(const glm::mat4 &transform, const glm::vec3 &color, const float *points, const int point_count);
+void drawLineList2d(
+    const float trackerWidth, const float trackerHeight, 
+    const glm::vec3 &color, 
+    const float *point_data_2d, const int point_count);
 void drawQuadList2d(
     const float trackerWidth, const float trackerHeight, 
     const glm::vec3 &color, 

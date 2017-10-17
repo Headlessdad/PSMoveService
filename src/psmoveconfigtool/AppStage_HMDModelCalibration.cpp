@@ -58,7 +58,6 @@ static const glm::vec3 k_psmove_frustum_color = glm::vec3(0.1f, 0.7f, 0.3f);
 static const glm::vec3 k_psmove_frustum_color_no_track = glm::vec3(1.0f, 0.f, 0.f);
 
 //-- private methods -----
-static bool triangulateHMDProjections(PSMHeadMountedDisplay *hmd_view, StereoCameraState *tracker_pair_state, std::vector<Eigen::Vector3f> &out_triangulated_points);
 static PSMVector2f projectTrackerRelativePositionOnTracker(
     const PSMVector3f &trackerRelativePosition,
     const PSMMatrix3d &camera_matrix,
@@ -330,7 +329,7 @@ public:
 
 	void recordSamples(PSMHeadMountedDisplay *hmd_view, StereoCameraState *stereo_camera_state)
 	{
-		if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastTriangulatedPoints))
+		if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastCorrelatedPoints))
 		{
             // TODO
             #if 0
@@ -409,9 +408,9 @@ public:
 		}
 	}
 
-	void render(const PSMTracker *trackerView) const
-	{
-		PSMVector2f tracker_size;
+    void render(const PSMTracker *trackerView) const
+    {
+        PSMVector2f tracker_size;
         PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &tracker_size);
 
         PSMTrackerIntrinsics intrinsics;
@@ -430,15 +429,17 @@ public:
         const float rightX0= midX, rightY0= topY;
         const float rightX1= rightX, rightY1= bottomY;
 
-		PSMVector2f left_projections[k_max_projection_points];
+        PSMVector2f left_projections[k_max_projection_points];
         PSMVector2f right_projections[k_max_projection_points];
-		int point_count = static_cast<int>(m_lastTriangulatedPoints.size());
+        PSMVector2f correlation_lines[2*k_max_projection_points];
+        int point_count = static_cast<int>(m_lastCorrelatedPoints.size());
 
-		for (int point_index = 0; point_index < point_count; ++point_index)
-		{
-			PSMVector3f worldPosition= eigen_vector3f_to_psm_vector3f(m_lastTriangulatedPoints[point_index]);
+        for (int point_index = 0; point_index < point_count; ++point_index)
+        {
+            const CorrelatedPixelPair &pair= m_lastCorrelatedPoints[point_index];
+            const PSMVector3f worldPosition= eigen_vector3f_to_psm_vector3f(pair.triangulated_point);
 
-			left_projections[point_index] = 
+            left_projections[point_index] = 
                 projectTrackerRelativePositionOnTracker(
                     worldPosition, 
                     stereo_intrinsics.left_camera_matrix,
@@ -448,23 +449,59 @@ public:
                     worldPosition, 
                     stereo_intrinsics.right_camera_matrix,
                     stereo_intrinsics.right_distortion_coefficients);
-		}
+            
+            const PSMVector2f remappedLeftPixel= remapPointIntoSubWindow(
+                tracker_size.x, tracker_size.y,
+                leftX0, leftY0,
+                leftX1, leftY1,
+                pair.left_pixel);
+            const PSMVector2f remappedRightPixel= remapPointIntoSubWindow(
+                tracker_size.x, tracker_size.y,
+                rightX0, rightY0,
+                rightX1, rightY1,
+                pair.right_pixel);
 
-		drawPointCloudProjectionInSubWindow(
+            correlation_lines[2*point_index]= remappedLeftPixel;
+            correlation_lines[2*point_index+1]= remappedRightPixel;
+
+            // Draw the label for the correlation line showing disparity and z-values
+            drawTextAtScreenPosition(
+                glm::vec3(remappedLeftPixel.x, remappedLeftPixel.y, 0.5f),
+                "d:%.1f, z:%.1f",
+                pair.disparity, pair.triangulated_point.z());
+        }
+
+        // Draw the correlation lines between the left and right pixels
+        drawLineList2d(
             tracker_size.x, tracker_size.y, 
-            leftX0, leftY0,
-            leftX1, leftY1,
-            glm::vec3(0.f, 1.f, 0.f), 
-            left_projections, point_count, 6.f);
-		drawPointCloudProjectionInSubWindow(
-            tracker_size.x, tracker_size.y, 
-            rightX0, rightY0,
-            rightX1, rightY1,
-            glm::vec3(0.f, 1.f, 0.f), 
-            right_projections, point_count, 6.f);
+            glm::vec3(1.f, 1.f, 0.f), 
+            reinterpret_cast<float *>(correlation_lines), point_count*2);
+
+        //TODO:
+        // Draw the projections of the triangulated points back onto the sub windows
+        //drawPointCloudProjectionInSubWindow(
+        //    tracker_size.x, tracker_size.y, 
+        //    leftX0, leftY0,
+        //    leftX1, leftY1,
+        //    glm::vec3(0.f, 1.f, 0.f), 
+        //    left_projections, point_count, 6.f);
+        //drawPointCloudProjectionInSubWindow(
+        //    tracker_size.x, tracker_size.y, 
+        //    rightX0, rightY0,
+        //    rightX1, rightY1,
+        //    glm::vec3(0.f, 1.f, 0.f), 
+        //    right_projections, point_count, 6.f);
 	}
 
 protected:
+    struct CorrelatedPixelPair
+    {
+        PSMVector2f left_pixel;
+        PSMVector2f right_pixel;
+        float disparity;
+        Eigen::Vector3f triangulated_point;
+    };
+
 	bool add_point_to_led_model(const int led_index, const Eigen::Vector3f &point)
 	{
 		bool bAddedPoint = false;
@@ -509,8 +546,197 @@ protected:
 		}
 	}
 
+    inline PSMVector2f compute_centroid2d(const PSMVector2f *points, const int point_count)
+    {
+        PSMVector2f center= {0.f, 0.f};
+
+        for (int point_index = 0; point_index < point_count; ++point_index)
+        {
+            center= PSM_Vector2fAdd(&center, &points[point_index]);
+        }
+        
+        center= PSM_Vector2fSafeScalarDivide(&center, (float)point_count, k_psm_float_vector2_zero);
+
+        return center;
+    }
+
+    inline void translate_points2d(
+        const PSMVector2f *in_points,
+        const int point_count,
+        const PSMVector2f *direction, 
+        const float scale, 
+        PSMVector2f *out_points)
+    {
+        for (int point_index = 0; point_index < point_count; ++point_index)
+        {
+            out_points[point_index]= PSM_Vector2fScaleAndAdd(&in_points[point_index], scale, direction);
+        }
+    }
+
+    inline int find_closest_point2d(
+        const PSMVector2f *test_point, 
+        const PSMVector2f *points, 
+        const int point_count)
+    {
+        int best_index= -1;
+        float best_sqrd_dist= k_real_max;
+
+        for (int test_index = 0; test_index < point_count; ++test_index)
+        {
+            const float sqrd_dist= PSM_Vector2fDistanceSquared(test_point, &points[test_index]);
+
+            if (sqrd_dist < best_sqrd_dist)
+            {
+                best_index= test_index;
+                best_sqrd_dist= sqrd_dist;
+            }
+        }
+
+        return best_index;
+    }
+
+    bool triangulateHMDProjections(
+	    PSMHeadMountedDisplay *hmd_view, 
+	    StereoCameraState *stereo_tracker_state,
+	    std::vector<CorrelatedPixelPair> &out_triangulated_points)
+    {
+        const PSMTracker *TrackerView = stereo_tracker_state->trackerView;
+        PSMTrackingProjection trackingProjection;
+        
+        out_triangulated_points.clear();
+        
+        // Triangulate tracking LEDs that both cameras can see
+        bool bIsTracking= false;
+        if (PSM_GetIsHmdTracking(hmd_view->HmdID, &bIsTracking) == PSMResult_Success)
+        {
+            PSMTrackerID selected_tracker_id= -1;
+
+            if (bIsTracking &&
+                PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, &selected_tracker_id, &trackingProjection) == PSMResult_Success)
+            {
+                assert(trackingProjection.shape_type == PSMShape_PointCloud);
+                assert(trackingProjection.projection_count == STEREO_PROJECTION_COUNT);
+
+                // Undistorted/rectified points
+                const PSMVector2f *leftPoints = trackingProjection.projections[LEFT_PROJECTION_INDEX].shape.pointcloud.points;
+                const PSMVector2f *rightPoints = trackingProjection.projections[RIGHT_PROJECTION_INDEX].shape.pointcloud.points;
+                const int leftPointCount = trackingProjection.projections[LEFT_PROJECTION_INDEX].shape.pointcloud.point_count;
+                const int rightPointCount = trackingProjection.projections[RIGHT_PROJECTION_INDEX].shape.pointcloud.point_count;
+
+                // Compute the centroid of the left and right point sets
+                const PSMVector2f leftPointCentroid= compute_centroid2d(leftPoints, leftPointCount);
+                const PSMVector2f rightPointCentroid= compute_centroid2d(rightPoints, rightPointCount);
+
+                // Recenter the projection points about the origin
+                PSMVector2f recenteredLeftPoints[MAX_POINT_CLOUD_POINT_COUNT];
+                PSMVector2f recenteredRightPoints[MAX_POINT_CLOUD_POINT_COUNT];
+                translate_points2d(leftPoints, leftPointCount, &leftPointCentroid, -1.f, recenteredLeftPoints);
+                translate_points2d(rightPoints, rightPointCount, &rightPointCentroid, -1.f, recenteredRightPoints);
+
+                // Initialize the correspondence tables
+                std::vector<int> left_point_correspondence(leftPointCount);
+                std::vector<int> right_point_correspondence(rightPointCount);
+                std::fill(left_point_correspondence.begin(), left_point_correspondence.end(), -1);
+                std::fill(right_point_correspondence.begin(), right_point_correspondence.end(), -1);
+
+                // For each point in one tracking projection A, 
+                // try and find the corresponding point in the projection B
+                for (int leftPointIndex = 0; leftPointIndex < leftPointCount; ++leftPointIndex)
+                {
+                    const PSMVector2f recenteredLeftPoint = recenteredLeftPoints[leftPointIndex];
+                    int bestRightPointIndex= 
+                        find_closest_point2d(&recenteredLeftPoint, recenteredRightPoints, rightPointCount);
+
+                    if (bestRightPointIndex != -1)
+                    {
+                        const int prevBestLeftPointIndex= right_point_correspondence[bestRightPointIndex];
+
+                        if (prevBestLeftPointIndex != -1)
+                        {                            
+                            // Right point had prev best correspondence,
+                            // so see if the new one would be closer
+                            const PSMVector2f bestRightPoint = recenteredRightPoints[bestRightPointIndex];
+                            
+                            const PSMVector2f prevBestLeftPoint = recenteredLeftPoints[prevBestLeftPointIndex];
+                            const float prevBestLeftDistSqrd= PSM_Vector2fDistanceSquared(&prevBestLeftPoint, &bestRightPoint);
+                            
+                            const PSMVector2f leftPoint = recenteredLeftPoints[leftPointIndex];
+                            const float leftDistSqrd= PSM_Vector2fDistanceSquared(&leftPoint, &bestRightPoint);
+
+                            if (leftDistSqrd < prevBestLeftDistSqrd)
+                            {
+                                // Stomp the old correspondence with the new correspondence
+                                left_point_correspondence[prevBestLeftPointIndex]= -1;
+                                left_point_correspondence[leftPointIndex]= bestRightPointIndex;
+                                right_point_correspondence[bestRightPointIndex]= leftPointIndex;
+                            }
+                        }
+                        else
+                        {
+                            // Right point had no best correspondence,
+                            // so connect the left and right points
+                            left_point_correspondence[leftPointIndex]= bestRightPointIndex;
+                            right_point_correspondence[bestRightPointIndex]= leftPointIndex;
+                        }
+                    }
+                }
+
+                // Use the correspondence table to make correlated-pixel-pairs
+                // for every pair that satisfies the epipolar distance constraint
+ 			    for (int leftPointIndex = 0; leftPointIndex < leftPointCount; ++leftPointIndex)
+			    {
+                    const int rightPointIndex= left_point_correspondence[leftPointIndex];
+                    if (rightPointIndex == -1)
+                        continue;
+                    
+				    const PSMVector2f &leftPoint = leftPoints[leftPointIndex];
+				    const cv::Mat cvLeftPoint = cv::Mat(cv::Point2f(leftPoint.x, leftPoint.y));
+
+					const PSMVector2f &rightPoint = rightPoints[rightPointIndex];
+					cv::Mat cvRightPoint = cv::Mat(cv::Point2f(rightPoint.x, rightPoint.y));
+
+					if (stereo_tracker_state->do_points_correspond(
+                            cvLeftPoint, cvRightPoint, stereo_tracker_state->tolerance))
+					{
+                        // Compute the horizontal pixel disparity between the left and right corresponding pixels
+                        const double disparity= (double)(leftPoint.x - rightPoint.x);
+
+                        if (fabs(disparity) > k_real64_epsilon)
+                        {
+                            // Project the left pixel + disparity into the world using
+                            // the projection matrix 'Q' computed during stereo calibration
+                            Eigen::Vector4d pixel((double)leftPoint.x, (double)leftPoint.y, disparity, 1.0);
+                            Eigen::Vector4d homogeneusPoint= stereo_tracker_state->Q * pixel;
+
+						    // Get the triangulated 3d position
+						    const double w = homogeneusPoint.w();
+
+                            if (fabs(w) > k_real64_epsilon)
+                            {
+                                CorrelatedPixelPair pair;
+                                pair.left_pixel= leftPoint;
+                                pair.right_pixel= rightPoint;
+                                pair.disparity= (float)disparity;
+                                pair.triangulated_point= Eigen::Vector3f(
+							        (float)(homogeneusPoint.x() / w),
+							        (float)(homogeneusPoint.y() / w),
+							        (float)(homogeneusPoint.z() / w));
+
+						        // Add to the list of world space points we saw this frame
+						        out_triangulated_points.push_back(pair);
+                            }
+                        }
+					}
+                }
+
+		    } 
+	    }
+
+	    return out_triangulated_points.size() >= 3;
+    }
+
 private:
-	std::vector<Eigen::Vector3f> m_lastTriangulatedPoints;
+    std::vector<CorrelatedPixelPair> m_lastCorrelatedPoints;
 	int m_expectedLEDCount;
 	int m_seenLEDCount;
 	int m_totalLEDSampleCount;
@@ -1350,97 +1576,6 @@ void AppStage_HMDModelCalibration::handle_all_devices_ready()
 }
 
 //-- private methods -----
-static bool triangulateHMDProjections(
-	PSMHeadMountedDisplay *hmd_view, 
-	StereoCameraState *stereo_tracker_state,
-	std::vector<Eigen::Vector3f> &out_triangulated_points)
-{
-	const PSMTracker *TrackerView = stereo_tracker_state->trackerView;
-	PSMTrackingProjection trackingProjection;
-
-	out_triangulated_points.clear();
-
-	// Triangulate tracking LEDs that both cameras can see
-	bool bIsTracking= false;
-	if (PSM_GetIsHmdTracking(hmd_view->HmdID, &bIsTracking) == PSMResult_Success)
-	{
-        PSMTrackerID selected_tracker_id= -1;
-
-		if (bIsTracking &&
-			PSM_GetHmdProjectionOnTracker(hmd_view->HmdID, &selected_tracker_id, &trackingProjection) == PSMResult_Success)
-		{
-			assert(trackingProjection.shape_type == PSMShape_PointCloud);
-            assert(trackingProjection.projection_count == STEREO_PROJECTION_COUNT);
-
-            // Undistorted/rectified points
-			const PSMVector2f *leftPoints = trackingProjection.projections[LEFT_PROJECTION_INDEX].shape.pointcloud.points;
-            const PSMVector2f *rightPoints = trackingProjection.projections[RIGHT_PROJECTION_INDEX].shape.pointcloud.points;
-			const int leftPointCount = trackingProjection.projections[LEFT_PROJECTION_INDEX].shape.pointcloud.point_count;
-			const int rightPointCount = trackingProjection.projections[RIGHT_PROJECTION_INDEX].shape.pointcloud.point_count;
-
-			// Make a set of the uncorrelated points on trackerB
-			std::set<int> rightPointIndices;
-			for (int rightPointIndex = 0; rightPointIndex < rightPointCount; ++rightPointIndex)
-			{
-				rightPointIndices.insert(rightPointIndex);
-			}
-
-			// For each point in one tracking projection A, 
-			// try and find the corresponding point in the projection B
-			for (int leftPointIndex = 0; leftPointIndex < leftPointCount; ++leftPointIndex)
-			{
-				const PSMVector2f &leftPoint = leftPoints[leftPointIndex];
-				const cv::Mat cvLeftPoint = cv::Mat(cv::Point2f(leftPoint.x, leftPoint.y));
-
-				for (auto it = rightPointIndices.begin(); it != rightPointIndices.end(); )
-				{
-					const int rightPointIndex = *it;
-					const PSMVector2f &rightPoint = rightPoints[rightPointIndex];
-					cv::Mat cvRightPoint = cv::Mat(cv::Point2f(rightPoint.x, rightPoint.y));
-
-					if (stereo_tracker_state->do_points_correspond(cvLeftPoint, cvRightPoint, stereo_tracker_state->tolerance))
-					{
-                        // Compute the horizontal pixel disparity between the left and right corresponding pixels
-                        const double disparity= (double)(leftPoint.x - rightPoint.x);
-
-                        if (fabs(disparity) > k_real64_epsilon)
-                        {
-                            // Project the left pixel + disparity into the world using
-                            // the projection matrix 'Q' computed during stereo calibration
-                            Eigen::Vector4d pixel((double)leftPoint.x, (double)leftPoint.y, disparity, 1.0);
-                            Eigen::Vector4d homogeneusPoint= stereo_tracker_state->Q * pixel;
-
-						    // Get the triangulated 3d position
-						    const double w = homogeneusPoint.w();
-
-                            if (fabs(w) > k_real64_epsilon)
-                            {
-						        const Eigen::Vector3f triangulated_point(
-							        (float)(homogeneusPoint.x() / w),
-							        (float)(homogeneusPoint.y() / w),
-							        (float)(homogeneusPoint.z() / w));
-
-						        // Add to the list of world space points we saw this frame
-						        out_triangulated_points.push_back(triangulated_point);
-                            }
-                        }
-
-						// Remove the point index from the set of indices to consider 
-						// so that it's not correlated with another point in tracker A
-						it= rightPointIndices.erase(it);
-					}
-					else
-					{
-						++it;
-					}
-				}
-			}
-		} 
-	}
-
-	return out_triangulated_points.size() >= 3;
-}
-
 static PSMVector2f projectTrackerRelativePositionOnTracker(
 	const PSMVector3f &trackerRelativePosition,
     const PSMMatrix3d &camera_matrix,

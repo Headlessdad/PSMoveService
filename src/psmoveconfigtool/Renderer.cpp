@@ -376,7 +376,19 @@ void Renderer::renderEnd()
 }
 
 //-- Drawing Methods -----
-inline glm::vec3 remapPointIntoSubWindow(
+PSMVector2f remapPointIntoSubWindow(
+    const float screenWidth, const float screenHeight,
+    const float windowLeft, const float windowTop,
+    const float windowRight, const float windowBottom,
+    const PSMVector2f &in_point)
+{
+    const float u= in_point.x / screenWidth;
+    const float v= in_point.y / screenHeight;
+
+    return {(1.f-u)*windowLeft + u*windowRight, (1.f-v)*windowTop + v*windowBottom};
+}
+
+glm::vec3 remapPointIntoSubWindow(
     const float screenWidth, const float screenHeight,
     const float windowLeft, const float windowTop,
     const float windowRight, const float windowBottom,
@@ -442,16 +454,11 @@ void drawArrow(
 }
 
 void drawTextAtWorldPosition(
-    const glm::mat4 &transform, 
-    const glm::vec3 &position, 
-    const char *format, 
+    const glm::mat4 &transform,
+    const glm::vec3 &position,
+    const char *format,
     ...)
 {
-    assert(Renderer::getIsRenderingStage());
-
-    // Render with the default font
-    const FontAsset *font= AssetManager::getInstance()->getDefaultFont();
-
     // Convert the world space coordinates into screen space
     const glm::vec3 transformed_position= glm::vec3(transform * glm::vec4(position, 1.f));
     const int screenWidth= static_cast<int>(ImGui::GetIO().DisplaySize.x);
@@ -462,7 +469,6 @@ void drawTextAtWorldPosition(
             Renderer::getCurrentCameraViewMatrix(), 
             Renderer::getCurrentProjectionMatrix(),
             glm::vec4(0, screenHeight, screenWidth, -screenHeight));
-    const float initial_x= screenCoords.x;
 
     // Bake out the text string
     char text[1024];
@@ -471,6 +477,39 @@ void drawTextAtWorldPosition(
     int w = vsnprintf(text, sizeof(text), format, args);
     text[sizeof(text)-1] = 0;
     va_end(args);
+
+    drawZeroTerminatedTextAtScreenPosition(screenCoords, text);
+}
+
+void drawTextAtScreenPosition(
+    const glm::vec3 &screenCoords,
+    const char *format,
+    ...)
+{
+    // Bake out the text string
+    char text[1024];
+    va_list args;
+    va_start(args, format);
+    int w = vsnprintf(text, sizeof(text), format, args);
+    text[sizeof(text)-1] = 0;
+    va_end(args);
+
+    drawZeroTerminatedTextAtScreenPosition(screenCoords, text);
+}
+
+void drawZeroTerminatedTextAtScreenPosition(
+    const glm::vec3 &initialScreenCoords, 
+    const char *text)
+{
+    assert(Renderer::getIsRenderingStage());
+
+    // Render with the default font
+    const FontAsset *font= AssetManager::getInstance()->getDefaultFont();
+
+    const int screenWidth= static_cast<int>(ImGui::GetIO().DisplaySize.x);
+    const int screenHeight= static_cast<int>(ImGui::GetIO().DisplaySize.y);
+    glm::vec3 screenCoords= initialScreenCoords;
+    const float initial_x= initialScreenCoords.x;
 
     // Save a back up of the projection matrix and replace with an orthographic projection,
     // Where units = screen pixels, origin at top left
@@ -493,7 +532,7 @@ void drawTextAtWorldPosition(
 
     // Render the text quads
     glBegin(GL_QUADS);
-    char *next_character= text;
+    const char *next_character= text;
     while (*next_character) 
     {
         char ascii_character= *next_character;
@@ -979,6 +1018,58 @@ void drawLineStrip(const glm::mat4 &transform, const glm::vec3 &color, const flo
             glVertex3fv(&points[sampleIndex*3]);
         }
         glEnd();
+    glPopMatrix();
+}
+
+void drawLineList2d(
+    const float trackerWidth, const float trackerHeight, 
+    const glm::vec3 &color, 
+    const float *point_data_2d, const int point_count)
+{
+    assert(Renderer::getIsRenderingStage());
+    assert((point_count % 2) == 0);
+
+    // Clear the depth buffer to allow overdraw 
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Save a backup of the projection matrix 
+    // and replace with a projection that maps the tracker image coordinates over the whole screen
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.f, trackerWidth, trackerHeight, 0, 1.0f, -1.0f);
+
+    // Save a backup of the modelview matrix and replace with the identity matrix
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    // Draw line strip connecting all of the points on the line strip
+    glColor3fv(glm::value_ptr(color));
+    glBegin(GL_LINES);
+    for (int point_index= 0; point_index < point_count; point_index+=2) // 2 points per line
+    {
+        const int float_index= 2*point_index; // 2 floats per point
+        const glm::vec3 vertex0(
+            point_data_2d[float_index],     // x
+            point_data_2d[float_index + 1], // y 
+            0.5f);
+        const glm::vec3 vertex1(
+            point_data_2d[float_index + 2], // x
+            point_data_2d[float_index + 3], // y
+            0.5f);
+
+        glVertex3fv(glm::value_ptr(vertex0));
+        glVertex3fv(glm::value_ptr(vertex1));
+    }
+    glEnd();
+
+    // Restore the projection matrix
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+
+    // Restore the modelview matrix
+    glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
 }
 
