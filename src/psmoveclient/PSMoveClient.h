@@ -72,6 +72,7 @@ public:
     void free_hmd_listener(PSMHmdID HmdID);   
 	PSMHeadMountedDisplay* get_hmd_view(PSMHmdID tracker_id);
     PSMRequestID get_hmd_list();    
+    PSMRequestID get_hmd_tracking_shape(PSMHmdID HmdID);
     PSMRequestID start_hmd_data_stream(PSMHmdID hmd_id, unsigned int flags);
     PSMRequestID stop_hmd_data_stream(PSMHmdID hmd_id);
     PSMRequestID set_hmd_data_stream_tracker_index(PSMHmdID hmd_id, PSMTrackerID tracker_id);

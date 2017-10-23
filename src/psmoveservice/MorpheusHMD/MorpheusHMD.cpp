@@ -616,10 +616,20 @@ void
 MorpheusHMD::getTrackingShape(CommonDeviceTrackingShape &outTrackingShape) const
 {
 	outTrackingShape.shape_type = eCommonTrackingShapeType::PointCloud;
-	//###HipsterSloth TODO: These are just me eye balling the LED centers with a ruler
-	// This should really be computed using the calibration tool
+    //###HipsterSloth: These values came from a 3d morpheus model
+    outTrackingShape.shape.point_cloud.point[0].set(0.00f, 0.00f, 0.00f); // 0
+    outTrackingShape.shape.point_cloud.point[1].set(7.25f, 4.05f, -3.75f); // 1
+    outTrackingShape.shape.point_cloud.point[2].set(9.05f, 0.00f, -9.65f); // 2
+    outTrackingShape.shape.point_cloud.point[3].set(7.25f, -4.05f, -3.75f); // 3
+    outTrackingShape.shape.point_cloud.point[4].set(-7.25f, 4.05f, -3.75f); // 4
+    outTrackingShape.shape.point_cloud.point[5].set(-9.05f, 0.00f, -9.65f); // 5
+    outTrackingShape.shape.point_cloud.point[6].set(-7.25f, -4.05f, -3.75f); // 6
+    outTrackingShape.shape.point_cloud.point[7].set(5.65f, -1.07f, -27.53f); // 7
+    outTrackingShape.shape.point_cloud.point[8].set(-5.65f, -1.07f, -27.53f); // 8
+	//###HipsterSloth: These are just me eye balling the LED centers with a ruler
+    /*
 	outTrackingShape.shape.point_cloud.point[0].set(0.f, 0.f, 0.f); // 0
-	outTrackingShape.shape.point_cloud.point[1].set(8.f, 4.5f, -2.5f); // 1
+    outTrackingShape.shape.point_cloud.point[1].set(8.f, 4.5f, -2.5f); // 1
 	outTrackingShape.shape.point_cloud.point[2].set(9.f, 0.f, -10.f); // 2
 	outTrackingShape.shape.point_cloud.point[3].set(8.f, -4.5f, -2.5f); // 3
 	outTrackingShape.shape.point_cloud.point[4].set(-8.f, 4.5f, -2.5f); // 4
@@ -627,6 +637,7 @@ MorpheusHMD::getTrackingShape(CommonDeviceTrackingShape &outTrackingShape) const
 	outTrackingShape.shape.point_cloud.point[6].set(-8.f, -4.5f, -2.5f); // 6
 	outTrackingShape.shape.point_cloud.point[7].set(6.f, -1.f, -24.f); // 7
 	outTrackingShape.shape.point_cloud.point[8].set(-6.f, -1.f, -24.f); // 8
+    */
 	outTrackingShape.shape.point_cloud.point_count = 9;
 }
 

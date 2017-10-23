@@ -179,6 +179,10 @@ public:
 				build_hmd_list_response_message(response, &out_response_message->payload.hmd_list);
 				out_response_message->payload_type = PSMResponseMessage::_responsePayloadType_HmdList;
 				break;
+			case PSMoveProtocol::Response_ResponseType_HMD_TRACKING_SHAPE:
+				build_hmd_tracking_shape_response_message(response, &out_response_message->payload.hmd_tracking_shape);
+				out_response_message->payload_type = PSMResponseMessage::_responsePayloadType_HmdTrackingShape;
+				break;
 			case PSMoveProtocol::Response_ResponseType_TRACKING_SPACE_SETTINGS:
 				build_tracking_space_response_message(response, &out_response_message->payload.tracking_space);
 				out_response_message->payload_type = PSMResponseMessage::_responsePayloadType_TrackingSpace;
@@ -285,6 +289,15 @@ public:
         result.k3= d.k3();
         result.p1= d.p1();
         result.p2= d.p2();
+    }
+
+    inline void protocol_position_to_psm_vec3f(
+        const PSMoveProtocol::Position &v,
+        PSMVector3f &result)
+    {
+        result.x= v.x();
+        result.y= v.y();
+        result.z= v.z();
     }
 
     inline void protocol_vec3_to_psm_vec3d(
@@ -472,6 +485,53 @@ public:
 		// Record how many controllers we copied into the payload
 		hmd_list->count = dest_hmd_count;
 	}
+
+    void build_hmd_tracking_shape_response_message(
+        ResponsePtr response,
+        PSMTrackingShape *hmd_tracking_shape)
+    {
+        const PSMoveProtocol::TrackingShape &protocol_shape = response->result_hmd_tracking_shape().shape();
+
+        if (protocol_shape.has_sphere())
+        {
+            hmd_tracking_shape->shape_type= PSMTrackingShape_Sphere;
+            hmd_tracking_shape->shape.sphere.radius= protocol_shape.sphere().radius_cm();
+        }
+        else if (protocol_shape.has_lightbar())
+        {
+            assert(protocol_shape.lightbar().triangle_point_size() == TRIANGLE_POINT_COUNT);
+            assert(protocol_shape.lightbar().quad_point_size() == QUAD_POINT_COUNT);
+
+            hmd_tracking_shape->shape_type= PSMTrackingShape_LightBar;
+            for (int i = 0; i < TRIANGLE_POINT_COUNT; i++)
+            {
+               protocol_position_to_psm_vec3f(
+                   protocol_shape.lightbar().triangle_point(i), 
+                   hmd_tracking_shape->shape.lightbar.triangle[i]);
+            }
+            for (int i = 0; i < QUAD_POINT_COUNT; i++)
+            {
+               protocol_position_to_psm_vec3f(
+                   protocol_shape.lightbar().quad_point(i), 
+                   hmd_tracking_shape->shape.lightbar.quad[i]);
+            }
+        }
+        else if (protocol_shape.has_points())
+        {
+            const int point_count= protocol_shape.points().points_size();
+            assert(point_count <= MAX_POINT_CLOUD_POINT_COUNT);
+
+            hmd_tracking_shape->shape_type= PSMTrackingShape_PointCloud;
+            hmd_tracking_shape->shape.pointcloud.point_count= point_count;
+
+            for (int i = 0; i < point_count; i++)
+            {
+               protocol_position_to_psm_vec3f(
+                   protocol_shape.points().points(i), 
+                   hmd_tracking_shape->shape.pointcloud.points[i]);
+            }
+        }
+    }
 
 	void build_tracking_space_response_message(
 		ResponsePtr response,

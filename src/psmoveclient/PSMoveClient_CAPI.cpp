@@ -1649,6 +1649,27 @@ PSMResult PSM_GetHmdProjectionOnTracker(PSMHmdID hmd_id, PSMTrackerID *outTracke
     return PSMResult_Error;
 }
 
+PSMResult PSM_GetHmdTrackingShape(PSMHmdID hmd_id, PSMTrackingShape *out_shape, int timeout_ms)
+{
+    assert(out_shape);
+
+    if (g_psm_client != nullptr && IS_VALID_HMD_INDEX(hmd_id))
+    {
+	    PSMBlockingRequest request(g_psm_client->get_hmd_tracking_shape(hmd_id));
+        PSMResult result_code= request.send(timeout_ms);
+
+        if (result_code == PSMResult_Success)
+        {
+            assert(request.get_response_payload_type() == PSMResponseMessage::_responsePayloadType_HmdTrackingShape);
+        
+            *out_shape= request.get_response_message().payload.hmd_tracking_shape;
+            result_code= PSMResult_Success;
+        }
+	}
+
+    return PSMResult_Error;
+}
+
 /// Blocking HMD Methods
 PSMResult PSM_GetHmdList(PSMHmdList *out_hmd_list, int timeout_ms)
 {
@@ -1723,6 +1744,25 @@ PSMResult PSM_GetHmdListAsync(PSMRequestID *out_request_id)
     if (g_psm_client != nullptr)
     {
         PSMRequestID req_id = g_psm_client->get_hmd_list();
+
+        if (out_request_id != nullptr)
+        {
+            *out_request_id= req_id;
+        }
+
+        result= (req_id != PSM_INVALID_REQUEST_ID) ? PSMResult_RequestSent : PSMResult_Error;
+    }
+
+    return result;
+}
+
+PSMResult PSM_GetHmdTrackingShapeAsync(PSMHmdID hmd_id, PSMRequestID *out_request_id)
+{
+    PSMResult result= PSMResult_Error;
+
+    if (g_psm_client != nullptr)
+    {
+        PSMRequestID req_id = g_psm_client->get_hmd_tracking_shape(hmd_id);
 
         if (out_request_id != nullptr)
         {

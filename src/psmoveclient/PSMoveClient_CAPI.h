@@ -673,6 +673,7 @@ typedef struct
         PSMControllerList controller_list;	///< Response to controller list request
         PSMTrackerList tracker_list;		///< Response to tracker list request
 		PSMHmdList hmd_list;				///< Response to hmd list request
+        PSMTrackingShape hmd_tracking_shape;///< Response to hmd tracking shape
         PSMTrackingSpace tracking_space;	///< Response to tracking space request
     } payload;
 
@@ -685,6 +686,7 @@ typedef struct
         _responsePayloadType_TrackerList,
         _responsePayloadType_TrackingSpace,
 		_responsePayloadType_HmdList,
+        _responsePayloadType_HmdTrackingShape,
 
         _responsePayloadType_Count
     } payload_type;
@@ -1521,6 +1523,16 @@ PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdOrientationOnTracker(PSMHmdID hmd_id, P
  */
 PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdProjectionOnTracker(PSMHmdID hmd_id, PSMTrackerID *out_tracker_id, PSMTrackingProjection *out_projection);
 
+/** \brief Helper function for getting the tracking shape geometry of an HMD
+	An HMDs tracking geometry gets projected onto each tracker.
+	The tracking geometry can be a sphere, an tracking bar, or a point cloud.
+	\param hmd_id The hmd id to get the tracking projection for
+	\param[out] out_shape The tracking shape of the HMD.
+	\param timeout_ms The conection timeout period in milliseconds, usually PSM_DEFAULT_TIMEOUT	
+	\return PSMResult_Success if HMD has a valid shape.
+ */
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdTrackingShape(PSMHmdID hmd_id, PSMTrackingShape *out_shape, int timeout_ms);
+
 // Blocking HMD Methods
 /** \brief Requests a list of the HMDs currently connected to PSMoveService.
 	Sends a request to PSMoveService to get the list of HMDs.
@@ -1583,6 +1595,17 @@ PSM_PUBLIC_FUNCTION(PSMResult) PSM_SetHmdDataStreamTrackerIndex(PSMHmdID hmd_id,
 	\return PSMResult_RequestSent if request successfully sent or PSMResult_Error if connection is invalid.
  */
 PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdListAsync(PSMRequestID *out_request_id);
+
+/** \brief Helper function for getting the tracking shape geometry of an HMD
+	Sends a request to PSMoveService to get the tracking shape of a given HMD.
+	\remark Async - Starts a request for HMD Result obtained in one of two ways:
+	  - Register callback for request id with \ref PSM_RegisterCallback and the poll with \ref PSM_Update()
+	  - Poll with \ref PSM_UpdateNoPollMessages() and then call \ref PSM_PollNextMessage() to see if 
+	  \ref PSMHmdList result has been received.
+	\param[out] out_request_id The id of the request sent to PSMoveService. Can be used to register callback with \ref PSM_RegisterCallback.
+	\return PSMResult_RequestSent if request successfully sent or PSMResult_Error if connection is invalid.
+ */
+PSM_PUBLIC_FUNCTION(PSMResult) PSM_GetHmdTrackingShapeAsync(PSMHmdID hmd_id, PSMRequestID *out_request_id);
 
 /** \brief Requests start of an unreliable(udp) data stream for a given HMD
 	Asks PSMoveService to start stream data for the given HMD with the given set of stream properties.

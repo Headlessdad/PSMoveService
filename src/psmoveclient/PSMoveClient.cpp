@@ -1142,6 +1142,18 @@ PSMRequestID PSMoveClient::get_hmd_list()
     return request->request_id();
 }    
 
+PSMRequestID PSMoveClient::get_hmd_tracking_shape(PSMHmdID HmdID)
+{
+    CLIENT_LOG_INFO("get_hmd_tracking_shape") << "requesting hmd tracking shape" << std::endl;
+
+    // Tell the psmove service that we want the tracking shape for an HMD
+    RequestPtr request(new PSMoveProtocol::Request());
+    request->set_type(PSMoveProtocol::Request_RequestType_GET_HMD_TRACKING_SHAPE);
+
+    m_request_manager->send_request(request);
+
+    return request->request_id();
+}
     
 PSMRequestID PSMoveClient::start_hmd_data_stream(
     PSMHmdID hmd_id,

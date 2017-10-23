@@ -22,6 +22,12 @@
 /// Conversion factor to go from centimeters to meters
 #define PSM_CENTIMETERS_TO_METERS  0.01f
 
+/// Conversion factor to go from millimeters to centimeters
+#define PSM_MILLIMETERS_TO_CENTIMETERS  0.1f
+
+/// Conversion factor to go from centimeters to millimeters
+#define PSM_CENTIMETERS_TO_MILLIMETERS  10.f
+
 /// A 2D vector with float components.
 typedef struct
 {
@@ -156,7 +162,7 @@ typedef enum
     PSMShape_Ellipse,					///< The 2D projection of a sphere (think conic section)
     PSMShape_LightBar,					///< The 2D projection of a 3D quad (bounding shape of DS4 lightbar) 
     PSMShape_PointCloud					///< The 2D projection of a 3D point cloud (Morpheus tracking lights)
-} PSMShapeType;
+} PSMProjectionShapeType;
 
 
 /// The projection of a tracking shape onto the image plane of a mono or stereo tracker video feed
@@ -164,8 +170,35 @@ typedef struct
 {
     PSMTrackingProjectionData projections[MAX_PROJECTION_COUNT];
     PSMTrackingProjectionCount projection_count;
-    PSMShapeType shape_type;
+    PSMProjectionShapeType shape_type;
 } PSMTrackingProjection;
+
+typedef enum 
+{
+    PSMTrackingShape_INVALID = -1,
+    PSMTrackingShape_Sphere,
+    PSMTrackingShape_LightBar,
+    PSMTrackingShape_PointCloud
+} PSMTrackingShapeType;
+
+/// A tracking shape of a controller or HMD
+typedef struct
+{
+    union{
+        struct {
+            float radius;
+        } sphere;
+        struct {
+            PSMVector3f triangle[TRIANGLE_POINT_COUNT];
+			PSMVector3f quad[QUAD_POINT_COUNT];
+        } lightbar;
+		struct {
+			PSMVector3f points[MAX_POINT_CLOUD_POINT_COUNT];
+			int point_count;
+		} pointcloud;
+    } shape;
+    PSMTrackingShapeType shape_type;
+} PSMTrackingShape;
 
 // Interface
 //----------

@@ -369,6 +369,10 @@ public:
                 response = new PSMoveProtocol::Response;
                 handle_request__set_hmd_data_stream_tracker_index(context, response);
                 break;
+            case PSMoveProtocol::Request_RequestType_GET_HMD_TRACKING_SHAPE:
+                response = new PSMoveProtocol::Response;
+                handle_request__get_hmd_tracking_shape(context, response);
+                break;
 
             // General Service Requests
             case PSMoveProtocol::Request_RequestType_GET_SERVICE_VERSION:
@@ -3208,6 +3212,79 @@ protected:
         {
             response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_ERROR);
         }
+    }
+
+    void handle_request__get_hmd_tracking_shape(
+        const RequestContext &context,
+        PSMoveProtocol::Response *response)
+    {
+        const int hmd_id = context.request->request_set_hmd_data_stream_tracker_index().hmd_id();
+
+        if (ServerUtility::is_index_valid(hmd_id, m_device_manager.getHMDViewMaxCount()))
+        {
+            ServerHMDViewPtr hmd_view = m_device_manager.getHMDViewPtr(hmd_id);
+
+            CommonDeviceTrackingShape trackingShape;
+            if (hmd_view->getTrackingShape(trackingShape))
+            {
+                PSMoveProtocol::TrackingShape* protocol_shape = 
+                    response->mutable_result_hmd_tracking_shape()->mutable_shape();
+
+                switch (trackingShape.shape_type)
+                {
+                case eCommonTrackingShapeType::Sphere:
+                    {
+                        protocol_shape->mutable_sphere()->set_radius_cm(trackingShape.shape.sphere.radius_cm);
+                    } break;
+                case eCommonTrackingShapeType::LightBar:
+                    {
+                        for (int i = 0; i < 4; i++)
+                        {
+                            PSMoveProtocol::Position *position= 
+                                protocol_shape->mutable_lightbar()->add_quad_point();
+
+                            position->set_x(trackingShape.shape.light_bar.quad[i].x);
+                            position->set_y(trackingShape.shape.light_bar.quad[i].y);
+                            position->set_z(trackingShape.shape.light_bar.quad[i].z);
+                        }
+
+                        for (int i = 0; i < 3; i++)
+                        {
+                            PSMoveProtocol::Position *position= 
+                                protocol_shape->mutable_lightbar()->add_triangle_point();
+
+                            position->set_x(trackingShape.shape.light_bar.triangle[i].x);
+                            position->set_y(trackingShape.shape.light_bar.triangle[i].y);
+                            position->set_z(trackingShape.shape.light_bar.triangle[i].z);
+                        }
+                    } break;
+                case eCommonTrackingShapeType::PointCloud:
+                    {
+                        for (int i = 0; i < trackingShape.shape.point_cloud.point_count; i++)
+                        {
+                            PSMoveProtocol::Position *position= 
+                                protocol_shape->mutable_points()->add_points();
+
+                            position->set_x(trackingShape.shape.point_cloud.point[i].x);
+                            position->set_y(trackingShape.shape.point_cloud.point[i].y);
+                            position->set_z(trackingShape.shape.point_cloud.point[i].z);
+                        }
+                    } break;
+                }
+
+                response->set_type(PSMoveProtocol::Response_ResponseType_HMD_TRACKING_SHAPE);
+                response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_OK);
+            }
+            else
+            {
+                response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_ERROR);
+            }
+        }
+        else
+        {
+            response->set_result_code(PSMoveProtocol::Response_ResultCode_RESULT_ERROR);
+        }
+
     }
 
     void handle_request__get_service_version(
