@@ -287,6 +287,11 @@ void AppStage_HMDSettings::renderUI()
                     {
                         AppStage_HMDModelCalibration::enterStageAndCalibrate(m_app, m_selectedHmdIndex);
                     }
+
+                    if (ImGui::Button("Test LED Model"))
+                    {
+                        AppStage_HMDModelCalibration::enterStageAndSkipCalibration(m_app, m_selectedHmdIndex);
+                    }
                 }
                 else
                 {

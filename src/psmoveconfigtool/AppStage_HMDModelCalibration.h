@@ -21,6 +21,9 @@ public:
 		pendingHmdListRequest,
 		failedHmdListRequest,
 
+		pendingHmdShapeRequest,
+		failedHmdShapeRequest,
+
 		pendingHmdStartRequest,
 		failedHmdStartRequest,
 
@@ -33,6 +36,12 @@ public:
 		verifyTrackers,
 		calibrate,
 		test
+	};
+
+	enum eTrackingTestRenderMode
+	{
+        renderMode2d,
+        renderMode3d
 	};
 
 	AppStage_HMDModelCalibration(class App *app);
@@ -61,14 +70,19 @@ protected:
 	void onEnterState(eMenuState newState);
 
 	void update_tracker_video();
-	void render_tracker_video();
+	void render_tracker_video(const float top_y, const float bottom_y);
 
 	void request_hmd_list();
 	static void handle_hmd_list_response(
 		const PSMResponseMessage *response,
 		void *userdata);
 
-	void request_start_hmd_stream(int HmdID);
+	void request_hmd_tracking_shape(PSMHmdID HmdID);
+	static void handle_hmd_tracking_shape_response(
+		const PSMResponseMessage *response,
+		void *userdata);
+
+	void request_start_hmd_stream(PSMHmdID HmdID);
 	static void handle_start_hmd_response(
 		const PSMResponseMessage *response_message,
 		void *userdata);
@@ -93,6 +107,7 @@ protected:
 
 private:
 	eMenuState m_menuState;
+    eTrackingTestRenderMode m_testRenderMode;
 	bool m_bBypassCalibration;
 
 	struct StereoCameraState *m_stereoTrackerState;

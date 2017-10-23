@@ -20,7 +20,7 @@
 #include "SDL_keycode.h"
 #include "SDL_opengl.h"
 
-//#include "ICP.h"
+#include "ICP.h"
 
 #include "PSMoveClient_CAPI.h"
 
@@ -62,7 +62,7 @@ static PSMVector2f projectTrackerRelativePositionOnTracker(
     const PSMVector3f &trackerRelativePosition,
     const PSMMatrix3d &camera_matrix,
     const PSMDistortionCoefficients &distortion_coefficients);
-static void drawHMD(PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform);
+static void drawHMD(const PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform);
 
 //-- private structures -----
 struct StereoCameraSectionState
@@ -293,22 +293,43 @@ class HMDModelState
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    HMDModelState(int trackerLEDCount)
-        : m_expectedLEDCount(trackerLEDCount)
+    HMDModelState(const PSMTrackingShape *hmd_tracking_shape)
+        : m_expectedLEDCount(0)
         , m_seenLEDCount(0)
         , m_totalLEDSampleCount(0)
-        , m_ledSampleSet(new LEDModelSamples[trackerLEDCount])
+        , m_ledSampleSet(nullptr)
+        , m_bIsIcpTransformValid(false)
     {
-        m_icpTransform = Eigen::Affine3d::Identity();
+        assert(hmd_tracking_shape->shape_type == PSMTrackingShape_PointCloud);
+        assert(hmd_tracking_shape->shape.pointcloud.point_count > 0);
 
-        for (int led_index = 0; led_index < trackerLEDCount; ++led_index)
+        m_expectedLEDCount= hmd_tracking_shape->shape.pointcloud.point_count;
+        m_ledSampleSet= new LEDModelSamples[hmd_tracking_shape->shape.pointcloud.point_count];
+        m_icpModelToSourceTransform = Eigen::Affine3d::Identity();
+
+        for (int led_index = 0; led_index < m_expectedLEDCount; ++led_index)
         {
             m_ledSampleSet[led_index].init();
         }
+
+        m_icpModelVertices.resize(Eigen::NoChange, hmd_tracking_shape->shape.pointcloud.point_count);
+        for (int source_index = 0; source_index < hmd_tracking_shape->shape.pointcloud.point_count; ++source_index)
+        {
+            const PSMVector3f &point= hmd_tracking_shape->shape.pointcloud.points[source_index];
+
+            m_icpModelVertices(0, source_index) = point.x;
+            m_icpModelVertices(1, source_index) = point.y;
+            m_icpModelVertices(2, source_index) = point.z;
+        }
+
+        m_icpModelKDTree= new nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple>(m_icpModelVertices);
     }
 
     ~HMDModelState()
     {
+        if (m_icpModelKDTree)
+            delete m_icpModelKDTree;
+
         delete[] m_ledSampleSet;
     }
 
@@ -327,13 +348,21 @@ public:
         return fraction;
     }
 
+    bool getHmdTransform(glm::mat4 &out_hmd_transform)
+    {
+        if (m_bIsIcpTransformValid)
+        {
+            out_hmd_transform= eigen_matrix4f_to_glm_mat4(m_icpModelToSourceTransform.cast<float>().matrix());
+        }
+
+        return m_bIsIcpTransformValid;
+    }
+
     void recordSamples(PSMHeadMountedDisplay *hmd_view, StereoCameraState *stereo_camera_state)
     {
         if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastCorrelatedPoints))
         {
-            // TODO
-            #if 0
-            const int source_point_count = static_cast<int>(m_lastTriangulatedPoints.size());
+            const int source_point_count = static_cast<int>(m_lastCorrelatedPoints.size());
 
             if (source_point_count >= 3)
             {
@@ -344,7 +373,7 @@ public:
                     icpSourceVertices.resize(Eigen::NoChange, source_point_count);
                     for (int source_index = 0; source_index < source_point_count; ++source_index)
                     {
-                        const Eigen::Vector3f &point = m_lastTriangulatedPoints[source_index];
+                        const Eigen::Vector3f &point = m_lastCorrelatedPoints[source_index].triangulated_point_cm;
 
                         icpSourceVertices(0, source_index) = point.x();
                         icpSourceVertices(1, source_index) = point.y();
@@ -352,7 +381,7 @@ public:
                     }
 
                     // Build kd-tree of the current set of target vertices
-                    nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple> kdtree(m_icpTargetVertices);
+                    nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple> kdtree(m_icpModelVertices);
 
                     // Attempt to align the new triangulated points with the previously found LED locations
                     // using the ICP algorithm
@@ -360,7 +389,7 @@ public:
                     params.p = .5;
                     params.max_icp = 15;
                     params.print_icpn = true;
-                    SICP::point_to_point(icpSourceVertices, m_icpTargetVertices, params);
+                    SICP::point_to_point(icpSourceVertices, m_icpModelVertices, params);
 
                     // Update the LED models based on the alignment
                     bool bUpdateTargetVertices = false;
@@ -374,31 +403,30 @@ public:
                         // Add the points to the their respective bucket...
                         if (cloest_distance_sqrd <= k_icp_point_snap_distance)
                         {
-                            bUpdateTargetVertices |= add_point_to_led_model(closest_led_index, source_vertex.cast<float>());
+                            bUpdateTargetVertices |= addPointToLedModel(closest_led_index, source_vertex.cast<float>());
                         }
                         // ... or make a new bucket if no point at that location
                         else
                         {
-                            bUpdateTargetVertices |= add_led_model(source_vertex.cast<float>());
+                            bUpdateTargetVertices |= addLedModel(source_vertex.cast<float>());
                         }
                     }
 
                     if (bUpdateTargetVertices)
                     {
-                        rebuildTargetVertices();
+                        rebuildModelVertices();
                     }
                 }
                 else
                 {
-                    for (auto it = m_lastTriangulatedPoints.begin(); it != m_lastTriangulatedPoints.end(); ++it)
+                    for (auto it = m_lastCorrelatedPoints.begin(); it != m_lastCorrelatedPoints.end(); ++it)
                     {
-                        add_led_model(*it);
+                        addLedModel(it->triangulated_point_cm);
                     }
 
-                    rebuildTargetVertices();
+                    rebuildModelVertices();
                 }
             }
-            #endif
 
             //TODO:
             /*
@@ -408,7 +436,90 @@ public:
         }
     }
 
-    void render(const PSMTracker *trackerView) const
+    void computeHmdTransform(PSMHeadMountedDisplay *hmd_view, StereoCameraState *stereo_camera_state)
+    {
+        if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastCorrelatedPoints))
+        {
+            const int source_point_count = static_cast<int>(m_lastCorrelatedPoints.size());
+
+            if (source_point_count >= 3)
+            {
+                // Copy the triangulated vertices into a 3xN matrix the SICP algorithms can use
+                SICP::Vertices icpSourceVertices, icpAlignedVertices;
+                icpSourceVertices.resize(Eigen::NoChange, source_point_count);
+                icpAlignedVertices.resize(Eigen::NoChange, source_point_count);
+                for (int aligned_index = 0; aligned_index < source_point_count; ++aligned_index)
+                {
+                    const Eigen::Vector3f &point = m_lastCorrelatedPoints[aligned_index].triangulated_point_cm;
+
+                    icpSourceVertices(0, aligned_index) = point.x();
+                    icpSourceVertices(1, aligned_index) = point.y();
+                    icpSourceVertices(2, aligned_index) = point.z();
+                    icpAlignedVertices(0, aligned_index) = point.x();
+                    icpAlignedVertices(1, aligned_index) = point.y();
+                    icpAlignedVertices(2, aligned_index) = point.z();
+                }
+
+                if (m_bIsIcpTransformValid)
+                {
+                    const Eigen::Affine3d sourceToModelTransform= m_icpModelToSourceTransform.inverse();
+
+                    icpAlignedVertices= sourceToModelTransform * icpSourceVertices;
+                }
+                else
+                {
+                    // Subtract off the centroid of the source points
+                    // to get the source points in close proximity to the target points
+                    // which are centered at the origin
+                    const Eigen::Vector3f centroid(
+                        icpAlignedVertices.row(0).mean(), 
+                        icpAlignedVertices.row(1).mean(), 
+                        icpAlignedVertices.row(2).mean());
+
+                    icpAlignedVertices.row(0).array() -= centroid(0);
+                    icpAlignedVertices.row(1).array() -= centroid(1); 
+                    icpAlignedVertices.row(2).array() -= centroid(2);
+                }
+
+                // Attempt to align the new triangulated points with the Model
+                // using the ICP algorithm
+                SICP::Parameters params;
+                params.p = .5;
+                params.max_icp = 15;
+                params.print_icpn = false;
+                SICP::point_to_point(icpAlignedVertices, m_icpModelVertices, params);
+
+                // Find the closest vertices on the model to aligned source vertices
+                SICP::Vertices icpCorrespondingModelVertices;
+                icpCorrespondingModelVertices.resize(Eigen::NoChange, source_point_count);
+                for (int aligned_index = 0; aligned_index < icpAlignedVertices.cols(); ++aligned_index)
+                {
+                    const Eigen::Vector3d aligned_vertex = 
+                        icpAlignedVertices.col(aligned_index);
+                    const int corresponding_model_point_index = 
+                        m_icpModelKDTree->closest(aligned_vertex.data());
+
+                    icpCorrespondingModelVertices.col(aligned_index)=
+                        m_icpModelVertices.col(corresponding_model_point_index);
+                }
+
+                // Compute the rigid transform from model vertices to source vertices
+                m_icpModelToSourceTransform= 
+                    RigidMotionEstimator::point_to_point(icpCorrespondingModelVertices, icpSourceVertices);
+                m_bIsIcpTransformValid= true;
+            }
+            else if (source_point_count < 1)
+            {
+                m_bIsIcpTransformValid= false;
+            }
+        }
+        else
+        {
+            m_bIsIcpTransformValid= false;
+        }
+    }
+
+    void render2DState(const PSMTracker *trackerView, const float gl_top_y, const float gl_bottom_y) const
     {
         PSMVector2f tracker_size;
         PSM_GetTrackerScreenSize(trackerView->tracker_info.tracker_id, &tracker_size);
@@ -418,10 +529,13 @@ public:
         assert(intrinsics.intrinsics_type == PSMTrackerIntrinsics::PSM_STEREO_TRACKER_INTRINSICS);
         const PSMStereoTrackerIntrinsics &stereo_intrinsics= intrinsics.intrinsics.stereo;
 
+        const float top_y_fraction= 1.f - ((gl_top_y + 1.f) / 2.f); // [1,-1] -> [0, 1]
+        const float bottom_y_fraction= 1.f - ((gl_bottom_y + 1.f) / 2.f); // [1,-1] -> [0, 1]
+
         const float midX= 0.5f*tracker_size.x;
         const float rightX= tracker_size.x-1.f;
-        const float topY= 0.25f*(tracker_size.y-1.f);
-        const float bottomY= 0.75f*(tracker_size.y-1.f);
+        const float topY= top_y_fraction*(tracker_size.y-1.f);
+        const float bottomY= bottom_y_fraction*(tracker_size.y-1.f);
 
         const float leftX0= 0.f, leftY0= topY;
         const float leftX1= midX, leftY1= bottomY;
@@ -434,10 +548,11 @@ public:
         PSMVector2f correlation_lines[2*k_max_projection_points];
         int point_count = static_cast<int>(m_lastCorrelatedPoints.size());
 
+        // Draw the label for the correlation line showing disparity and z-values
         for (int point_index = 0; point_index < point_count; ++point_index)
         {
             const CorrelatedPixelPair &pair= m_lastCorrelatedPoints[point_index];
-            const PSMVector3f worldPosition= eigen_vector3f_to_psm_vector3f(pair.triangulated_point);
+            const PSMVector3f worldPosition= eigen_vector3f_to_psm_vector3f(pair.triangulated_point_cm);
 
             left_projections[point_index] = 
                 projectTrackerRelativePositionOnTracker(
@@ -464,11 +579,10 @@ public:
             correlation_lines[2*point_index]= remappedLeftPixel;
             correlation_lines[2*point_index+1]= remappedRightPixel;
 
-            // Draw the label for the correlation line showing disparity and z-values
             drawTextAtScreenPosition(
                 glm::vec3(remappedLeftPixel.x, remappedLeftPixel.y, 0.5f),
                 "d:%.1f, z:%.1f",
-                pair.disparity, pair.triangulated_point.z());
+                pair.disparity, pair.triangulated_point_cm.z());
         }
 
         // Draw the correlation lines between the left and right pixels
@@ -493,16 +607,93 @@ public:
         //    right_projections, point_count, 6.f);
     }
 
+    void render3DState(const PSMTracker *trackerView, const PSMHeadMountedDisplay *hmdView)
+    {
+        // Draw the origin axes
+        drawTransformedAxes(glm::mat4(1.0f), 100.f);
+
+        // Draw the last triangulated point cloud
+        const int correlated_point_count = static_cast<int>(m_lastCorrelatedPoints.size());
+        if (correlated_point_count > 0)
+        {
+            PSMVector3f triangulated_points[k_max_projection_points];
+
+            for (int point_index = 0; point_index < correlated_point_count; ++point_index)
+            {
+                const CorrelatedPixelPair &pair= m_lastCorrelatedPoints[point_index];
+            
+                triangulated_points[point_index]= eigen_vector3f_to_psm_vector3f(pair.triangulated_point_cm);
+            }
+
+            drawPointCloud(glm::mat4(1.f), glm::vec3(1.f, 1.f, 0.f), (float *)triangulated_points, correlated_point_count);
+        }
+
+        // Draw the frustum for each tracking camera.
+        // The frustums are defined in PSMove tracking space.
+        // We need to transform them into chaperone space to display them along side the HMD.
+        if (trackerView != nullptr)
+        {
+            const PSMPosef psm_pose = trackerView->tracker_info.tracker_pose;
+            const glm::mat4 glm_pose = psm_posef_to_glm_mat4(psm_pose);
+
+            PSMFrustum frustum;
+            PSM_GetTrackerFrustum(trackerView->tracker_info.tracker_id, &frustum);
+
+            // use color depending on tracking status
+            glm::vec3 color;
+            bool bIsTracking;
+            if (PSM_GetIsHmdTracking(hmdView->HmdID, &bIsTracking) == PSMResult_Success)
+            {
+                if (bIsTracking && 
+                    PSM_GetHmdPixelLocationOnTracker(hmdView->HmdID, LEFT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success &&
+                    PSM_GetHmdPixelLocationOnTracker(hmdView->HmdID, RIGHT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success)
+                {
+                    color = k_psmove_frustum_color;
+                }
+                else
+                {
+                    color = k_psmove_frustum_color_no_track;
+                }
+            }
+            else
+            {
+                color = k_psmove_frustum_color_no_track;
+            }
+            drawTransformedFrustum(glm::mat4(1.f), &frustum, color);
+
+            drawTransformedAxes(glm_pose, 20.f);
+        }
+
+        glm::mat4 hmdTransform;
+        if (getHmdTransform(hmdTransform))
+        {
+            // Draw the model points at the HMD transform
+            const int model_point_count= m_icpModelVertices.cols();
+            PSMVector3f model_points[k_max_projection_points];
+            for (int point_index = 0; point_index < model_point_count; ++point_index)
+            {
+                const Eigen::Vector3f model_point= m_icpModelVertices.col(point_index).cast<float>();
+
+                model_points[point_index]= eigen_vector3f_to_psm_vector3f(model_point);
+            }
+            drawPointCloud(hmdTransform, glm::vec3(1.f, 0.f, 0.f), (float *)model_points, model_point_count);
+
+            // Draw the Morpheus model
+            drawHMD(hmdView, hmdTransform);
+            drawTransformedAxes(hmdTransform, 10.f);
+        }
+    }
+
 protected:
     struct CorrelatedPixelPair
     {
         PSMVector2f left_pixel;
         PSMVector2f right_pixel;
         float disparity;
-        Eigen::Vector3f triangulated_point;
+        Eigen::Vector3f triangulated_point_cm;
     };
 
-    bool add_point_to_led_model(const int led_index, const Eigen::Vector3f &point)
+    bool addPointToLedModel(const int led_index, const Eigen::Vector3f &point)
     {
         bool bAddedPoint = false;
         LEDModelSamples &ledModel = m_ledSampleSet[led_index];
@@ -516,13 +707,13 @@ protected:
         return bAddedPoint;
     }
 
-    bool add_led_model(const Eigen::Vector3f &initial_point)
+    bool addLedModel(const Eigen::Vector3f &initial_point)
     {
         bool bAddedLed = false;
 
         if (m_seenLEDCount < m_expectedLEDCount)
         {
-            if (add_point_to_led_model(m_seenLEDCount, initial_point))
+            if (addPointToLedModel(m_seenLEDCount, initial_point))
             {
                 ++m_seenLEDCount;
                 bAddedLed = true;
@@ -532,21 +723,21 @@ protected:
         return bAddedLed;
     }
 
-    void rebuildTargetVertices()
+    void rebuildModelVertices()
     {
-        m_icpTargetVertices.resize(Eigen::NoChange, m_seenLEDCount);
+        m_icpModelVertices.resize(Eigen::NoChange, m_seenLEDCount);
 
         for (int led_index = 0; led_index < m_seenLEDCount; ++led_index)
         {
             const Eigen::Vector3f &ledSample= m_ledSampleSet[led_index].average_position;
 
-            m_icpTargetVertices(0, led_index) = ledSample.x();
-            m_icpTargetVertices(1, led_index) = ledSample.y();
-            m_icpTargetVertices(2, led_index) = ledSample.z();
+            m_icpModelVertices(0, led_index) = ledSample.x();
+            m_icpModelVertices(1, led_index) = ledSample.y();
+            m_icpModelVertices(2, led_index) = ledSample.z();
         }
     }
 
-    inline PSMVector2f compute_centroid2d(const PSMVector2f *points, const int point_count)
+    inline PSMVector2f computeCentroid2d(const PSMVector2f *points, const int point_count)
     {
         PSMVector2f center= {0.f, 0.f};
 
@@ -560,7 +751,7 @@ protected:
         return center;
     }
 
-    inline void translate_points2d(
+    inline void translatePoints2d(
         const PSMVector2f *in_points,
         const int point_count,
         const PSMVector2f *direction, 
@@ -573,7 +764,7 @@ protected:
         }
     }
 
-    inline int find_closest_point2d(
+    inline int findClosestPoint2d(
         const PSMVector2f *test_point, 
         const PSMVector2f *points, 
         const int point_count)
@@ -628,7 +819,7 @@ protected:
         }
     }
 
-    int alignPointsCloudsUsingCorrelation(
+    int align2DPointCloudsUsingCorrelation(
         const StereoCameraState *stereo_tracker_state,
         const PSMTrackingProjection *trackingProjection,
         const std::vector<t_point_index_pair> &epipolar_pairs,
@@ -649,8 +840,8 @@ protected:
         // Recenter the projection points about the origin
         PSMVector2f recenteredLeftPoints[MAX_POINT_CLOUD_POINT_COUNT];
         PSMVector2f recenteredRightPoints[MAX_POINT_CLOUD_POINT_COUNT];
-        translate_points2d(leftPoints, leftPointCount, &leftOrigin, -1.f, recenteredLeftPoints);
-        translate_points2d(rightPoints, rightPointCount, &rightOrigin, -1.f, recenteredRightPoints);
+        translatePoints2d(leftPoints, leftPointCount, &leftOrigin, -1.f, recenteredLeftPoints);
+        translatePoints2d(rightPoints, rightPointCount, &rightOrigin, -1.f, recenteredRightPoints);
 
         // Initialize the correspondence tables
         std::vector<int> left_to_right_point_correspondence(leftPointCount);
@@ -752,7 +943,7 @@ protected:
         return matched_points;
     }
 
-    bool findBestPointCloudCorrelation(
+    bool findBest2DPointCloudCorrelation(
         const StereoCameraState *stereo_tracker_state,
         const PSMTrackingProjection *trackingProjection,
         std::vector<int> &bestLeftToRightPointCorrespondence)
@@ -767,7 +958,7 @@ protected:
         {
             std::vector<int> testLeftToRightPointCorrespondence;
             float correlationError= 0.f;
-            int matchCount = alignPointsCloudsUsingCorrelation(
+            int matchCount = align2DPointCloudsUsingCorrelation(
                 stereo_tracker_state,
                 trackingProjection,
                 epipolar_pairs,
@@ -818,7 +1009,7 @@ protected:
 
                 // Find the best fit correlation between the left and right point clouds
                 std::vector<int> bestLeftToRightPointCorrespondence;
-                if (findBestPointCloudCorrelation(
+                if (findBest2DPointCloudCorrelation(
                         stereo_tracker_state,
                         &trackingProjection,
                         bestLeftToRightPointCorrespondence))
@@ -845,10 +1036,10 @@ protected:
                             // Project the left pixel + disparity into the world using
                             // the projection matrix 'Q' computed during stereo calibration
                             Eigen::Vector4d pixel((double)leftPoint.x, (double)leftPoint.y, disparity, 1.0);
-                            Eigen::Vector4d homogeneusPoint= stereo_tracker_state->Q * pixel;
+                            Eigen::Vector4d homogeneus_point= stereo_tracker_state->Q * pixel;
 
                             // Get the triangulated 3d position
-                            const double w = homogeneusPoint.w();
+                            const double w = homogeneus_point.w();
 
                             if (fabs(w) > k_real64_epsilon)
                             {
@@ -856,10 +1047,13 @@ protected:
                                 pair.left_pixel= leftPoint;
                                 pair.right_pixel= rightPoint;
                                 pair.disparity= (float)disparity;
-                                pair.triangulated_point= Eigen::Vector3f(
-                                    (float)(homogeneusPoint.x() / w),
-                                    (float)(homogeneusPoint.y() / w),
-                                    (float)(homogeneusPoint.z() / w));
+
+                                // Q matrix transforms pixels to tracker relative positions in millimeters
+                                Eigen::Vector3f triangulated_point_mm= Eigen::Vector3f(
+                                    (float)(homogeneus_point.x() / w),
+                                    (float)(-homogeneus_point.y() / w), // Q matrix has flipped Y-axis
+                                    (float)(homogeneus_point.z() / w));
+                                pair.triangulated_point_cm= triangulated_point_mm * PSM_MILLIMETERS_TO_CENTIMETERS;
 
                                 // Add to the list of world space points we saw this frame
                                 out_triangulated_points.push_back(pair);
@@ -874,6 +1068,8 @@ protected:
     }
 
 private:
+    PSMTrackingShape m_currentTrackingShape;
+
     std::vector<CorrelatedPixelPair> m_lastCorrelatedPoints;
     int m_expectedLEDCount;
     int m_seenLEDCount;
@@ -881,8 +1077,10 @@ private:
 
     LEDModelSamples *m_ledSampleSet;
 
-    SICP::Vertices m_icpTargetVertices;
-    Eigen::Affine3d m_icpTransform;
+    SICP::Vertices m_icpModelVertices;
+    nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple> *m_icpModelKDTree;
+    Eigen::Affine3d m_icpModelToSourceTransform;
+    bool m_bIsIcpTransformValid;
 };
 
 //-- public methods -----
@@ -923,7 +1121,9 @@ void AppStage_HMDModelCalibration::enterStageAndSkipCalibration(App *app, int re
 
 void AppStage_HMDModelCalibration::enter()
 {
-    // Kick off this async request chain with an hmd list request
+    // Kick off this async request chain 
+    // hmd list request
+    // -> get hmd tracking shape 
     // -> hmd start request
     // -> tracker list request
     // -> tracker start request
@@ -946,11 +1146,13 @@ void AppStage_HMDModelCalibration::update()
     case eMenuState::inactive:
         break;
     case eMenuState::pendingHmdListRequest:
+    case eMenuState::pendingHmdShapeRequest:
     case eMenuState::pendingHmdStartRequest:
     case eMenuState::pendingTrackerListRequest:
     case eMenuState::pendingTrackerStartRequest:
         break;
     case eMenuState::failedHmdListRequest:
+    case eMenuState::failedHmdShapeRequest:
     case eMenuState::failedHmdStartRequest:
     case eMenuState::failedTrackerListRequest:
     case eMenuState::failedTrackerStartRequest:
@@ -959,27 +1161,29 @@ void AppStage_HMDModelCalibration::update()
         update_tracker_video();
         break;
     case eMenuState::calibrate:
-    {
-        update_tracker_video();
-
-        if (!m_hmdModelState->getIsComplete())
         {
-            m_hmdModelState->recordSamples(m_hmdView, m_stereoTrackerState);
-            if (m_hmdModelState->getIsComplete())
+            update_tracker_video();
+
+            if (!m_hmdModelState->getIsComplete())
             {
+                m_hmdModelState->recordSamples(m_hmdView, m_stereoTrackerState);
+                if (m_hmdModelState->getIsComplete())
+                {
+                    setState(eMenuState::test);
+                }
+            }
+            else
+            {
+                request_set_hmd_led_model_calibration();
                 setState(eMenuState::test);
             }
         }
-        else
-        {
-            request_set_hmd_led_model_calibration();
-            setState(eMenuState::test);
-        }
-    }
-    break;
-    case eMenuState::test:
-        //TODO
         break;
+    case eMenuState::test:
+        {
+            update_tracker_video();
+            m_hmdModelState->computeHmdTransform(m_hmdView, m_stereoTrackerState);
+        } break;
     default:
         assert(0 && "unreachable");
     }
@@ -992,88 +1196,52 @@ void AppStage_HMDModelCalibration::render()
     case eMenuState::inactive:
         break;
     case eMenuState::pendingHmdListRequest:
+    case eMenuState::pendingHmdShapeRequest:
     case eMenuState::pendingHmdStartRequest:
     case eMenuState::pendingTrackerListRequest:
     case eMenuState::pendingTrackerStartRequest:
         break;
     case eMenuState::failedHmdListRequest:
+    case eMenuState::failedHmdShapeRequest:
     case eMenuState::failedHmdStartRequest:
     case eMenuState::failedTrackerListRequest:
     case eMenuState::failedTrackerStartRequest:
         break;
     case eMenuState::verifyTrackers:
         {
-            render_tracker_video();
+            render_tracker_video(0.5f, -0.5f);
         } break;
     case eMenuState::calibrate:
         {
             const PSMTracker *TrackerView = m_stereoTrackerState->trackerView;
 
             // Draw the video from the PoV of the current tracker
-            render_tracker_video();
+            render_tracker_video(0.5f, -0.5f);
 
-            // Draw the current state of the HMD model being generated
-            m_hmdModelState->render(TrackerView);
-        }
-        break;
+            // Draw the LED tracking centroids and correlation lines
+            m_hmdModelState->render2DState(TrackerView, 0.5f, -0.5f);
+
+        } break;
     case eMenuState::test:
         {
-            // Draw the chaperone origin axes
-            drawTransformedAxes(glm::mat4(1.0f), 100.f);
+            const PSMTracker *trackerView = m_stereoTrackerState->trackerView;
 
-            // Draw the frustum for each tracking camera.
-            // The frustums are defined in PSMove tracking space.
-            // We need to transform them into chaperone space to display them along side the HMD.
-            if (m_stereoTrackerState != nullptr)
+            switch (m_testRenderMode)
             {
-                const PSMTracker *trackerView = m_stereoTrackerState->trackerView;
-                const PSMPosef psmove_space_pose = trackerView->tracker_info.tracker_pose;
-                const glm::mat4 chaperoneSpaceTransform = psm_posef_to_glm_mat4(psmove_space_pose);
-
+            case eTrackingTestRenderMode::renderMode2d:
                 {
-                    PSMFrustum frustum;
-                    PSM_GetTrackerFrustum(trackerView->tracker_info.tracker_id, &frustum);
+                    // Draw the video from the PoV of the current tracker
+                    render_tracker_video(0.5f, -0.5f);
 
-                    // use color depending on tracking status
-                    glm::vec3 color;
-                    bool bIsTracking;
-                    if (PSM_GetIsHmdTracking(m_hmdView->HmdID, &bIsTracking) == PSMResult_Success)
-                    {
-                        if (bIsTracking && 
-                            PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, LEFT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success &&
-                            PSM_GetHmdPixelLocationOnTracker(m_hmdView->HmdID, RIGHT_PROJECTION_INDEX, nullptr, nullptr) == PSMResult_Success)
-                        {
-                            color = k_psmove_frustum_color;
-                        }
-                        else
-                        {
-                            color = k_psmove_frustum_color_no_track;
-                        }
-                    }
-                    else
-                    {
-                        color = k_psmove_frustum_color_no_track;
-                    }
-                    drawTransformedFrustum(glm::mat4(1.f), &frustum, color);
-                }
-
-                drawTransformedAxes(chaperoneSpaceTransform, 20.f);
-            }
-
-
-            // Draw the Morpheus model
-            {
-                PSMPosef hmd_pose;
-                
-                if (PSM_GetHmdPose(m_hmdView->HmdID, &hmd_pose) == PSMResult_Success)
+                    // Draw the LED tracking centroids and correlation lines
+                    m_hmdModelState->render2DState(trackerView, 0.5f, -0.5f);
+                } break;
+            case eTrackingTestRenderMode::renderMode3d:
                 {
-                    glm::mat4 hmd_transform = psm_posef_to_glm_mat4(hmd_pose);
-
-                    drawHMD(m_hmdView, hmd_transform);
-                    drawTransformedAxes(hmd_transform, 10.f);
-                }
+                    // Draw the triangulated LED locations and the estimated HMD pose
+                    m_hmdModelState->render3DState(trackerView, m_hmdView);
+                } break;
             }
-
         } break;
     default:
         assert(0 && "unreachable");
@@ -1097,6 +1265,7 @@ void AppStage_HMDModelCalibration::renderUI()
         break;
 
     case eMenuState::pendingHmdListRequest:
+    case eMenuState::pendingHmdShapeRequest:
     case eMenuState::pendingHmdStartRequest:
     case eMenuState::pendingTrackerListRequest:
     case eMenuState::pendingTrackerStartRequest:
@@ -1116,6 +1285,7 @@ void AppStage_HMDModelCalibration::renderUI()
     } break;
 
     case eMenuState::failedHmdListRequest:
+    case eMenuState::failedHmdShapeRequest:
     case eMenuState::failedHmdStartRequest:
     case eMenuState::failedTrackerListRequest:
     case eMenuState::failedTrackerStartRequest:
@@ -1128,6 +1298,9 @@ void AppStage_HMDModelCalibration::renderUI()
         {
         case eMenuState::failedHmdListRequest:
             ImGui::Text("Failed hmd list retrieval!");
+            break;
+        case eMenuState::failedHmdShapeRequest:
+            ImGui::Text("Failed hmd shape retrieval!");
             break;
         case eMenuState::failedHmdStartRequest:
             ImGui::Text("Failed hmd stream start!");
@@ -1168,7 +1341,14 @@ void AppStage_HMDModelCalibration::renderUI()
 
         if (ImGui::Button("Looks Good!"))
         {
-            setState(eMenuState::calibrate);
+            if (!m_bBypassCalibration)
+            {
+                setState(eMenuState::calibrate);
+            }
+            else
+            {
+                setState(eMenuState::test);
+            }
         }
 
         if (ImGui::Button("Hmm... Something is wrong."))
@@ -1246,11 +1426,23 @@ void AppStage_HMDModelCalibration::renderUI()
             }
         }
 
-        if (ImGui::Button("Exit"))
+        switch (m_testRenderMode)
         {
-            m_app->setAppStage(AppStage_HMDModelCalibration::APP_STAGE_NAME);
+        case eTrackingTestRenderMode::renderMode2d:
+            if (ImGui::Button("Switch to 3d View"))
+            {
+                m_testRenderMode= eTrackingTestRenderMode::renderMode3d;
+            }
+            break;
+        case eTrackingTestRenderMode::renderMode3d:
+            if (ImGui::Button("Switch to 2d View"))
+            {
+                m_testRenderMode= eTrackingTestRenderMode::renderMode2d;
+            }
+            break;
+        default:
+            break;
         }
-
         // display tracking quality
         if (m_stereoTrackerState != nullptr)
         {
@@ -1276,6 +1468,11 @@ void AppStage_HMDModelCalibration::renderUI()
             }
         }
         ImGui::Text("");
+
+        if (ImGui::Button("Exit"))
+        {
+            m_app->setAppStage(AppStage_HMDModelCalibration::APP_STAGE_NAME);
+        }
 
         ImGui::End();
     }
@@ -1304,11 +1501,13 @@ void AppStage_HMDModelCalibration::onExitState(AppStage_HMDModelCalibration::eMe
     case eMenuState::inactive:
         break;
     case eMenuState::pendingHmdListRequest:
+    case eMenuState::pendingHmdShapeRequest:
     case eMenuState::pendingHmdStartRequest:
     case eMenuState::pendingTrackerListRequest:
     case eMenuState::pendingTrackerStartRequest:
         break;
     case eMenuState::failedHmdListRequest:
+    case eMenuState::failedHmdShapeRequest:
     case eMenuState::failedHmdStartRequest:
     case eMenuState::failedTrackerListRequest:
     case eMenuState::failedTrackerStartRequest:
@@ -1332,6 +1531,7 @@ void AppStage_HMDModelCalibration::onEnterState(AppStage_HMDModelCalibration::eM
     case eMenuState::inactive:
         break;
     case eMenuState::pendingHmdListRequest:
+    case eMenuState::pendingHmdShapeRequest:
     case eMenuState::pendingHmdStartRequest:
     case eMenuState::pendingTrackerListRequest:
         m_stereoTrackerState->init();
@@ -1340,6 +1540,7 @@ void AppStage_HMDModelCalibration::onEnterState(AppStage_HMDModelCalibration::eM
     case eMenuState::pendingTrackerStartRequest:
         break;
     case eMenuState::failedHmdListRequest:
+    case eMenuState::failedHmdShapeRequest:
     case eMenuState::failedHmdStartRequest:
     case eMenuState::failedTrackerListRequest:
     case eMenuState::failedTrackerStartRequest:
@@ -1347,10 +1548,13 @@ void AppStage_HMDModelCalibration::onEnterState(AppStage_HMDModelCalibration::eM
     case eMenuState::verifyTrackers:
         break;
     case eMenuState::calibrate:
-        // TODO
+        m_app->setCameraType(_cameraFixed);
         break;
     case eMenuState::test:
+        m_testRenderMode= eTrackingTestRenderMode::renderMode2d;
         m_app->setCameraType(_cameraOrbit);
+        m_app->getOrbitCamera()->reset();
+        m_app->getOrbitCamera()->setCameraOrbitRadius(500.f);
         break;
     default:
         assert(0 && "unreachable");
@@ -1383,14 +1587,16 @@ void AppStage_HMDModelCalibration::update_tracker_video()
     }
 }
 
-void AppStage_HMDModelCalibration::render_tracker_video()
+void AppStage_HMDModelCalibration::render_tracker_video(const float top_y, const float bottom_y)
 {
     if (m_stereoTrackerState->sections[PSMVideoFrameSection_Left].textureAsset != nullptr &&
         m_stereoTrackerState->sections[PSMVideoFrameSection_Left].textureAsset != nullptr)
     {
+        // Draw the two video feeds on the top half of the screen
         drawFullscreenStereoTexture(
             m_stereoTrackerState->sections[PSMVideoFrameSection_Left].textureAsset->texture_id, 
-            m_stereoTrackerState->sections[PSMVideoFrameSection_Right].textureAsset->texture_id);
+            m_stereoTrackerState->sections[PSMVideoFrameSection_Right].textureAsset->texture_id,
+            top_y, bottom_y);
     }
 }
 
@@ -1472,8 +1678,7 @@ void AppStage_HMDModelCalibration::handle_hmd_list_response(
         assert(response_message->payload_type == PSMResponseMessage::_responsePayloadType_HmdList);
         const PSMHmdList *hmd_list = &response_message->payload.hmd_list;
 
-        int trackedHmdId = thisPtr->m_overrideHmdId;
-        int trackerLEDCount = 0;
+        PSMHmdID trackedHmdId = thisPtr->m_overrideHmdId;
 
         if (trackedHmdId == -1)
         {
@@ -1487,17 +1692,15 @@ void AppStage_HMDModelCalibration::handle_hmd_list_response(
             }
         }
 
-        //###HipsterSloth $TODO - This should come as part of the response payload
-        trackerLEDCount = k_morpheus_led_count;
-
         if (trackedHmdId != -1)
         {
-            // Create a model for the HMD that corresponds to the number of tracking lights
-            assert(thisPtr->m_hmdModelState == nullptr);
-            thisPtr->m_hmdModelState = new HMDModelState(trackerLEDCount);
+            // Allocate an HMD view to track HMD state
+            assert(thisPtr->m_hmdView == nullptr);
+            PSM_AllocateHmdListener(trackedHmdId);
+            thisPtr->m_hmdView = PSM_GetHmd(trackedHmdId);
 
-            // Start streaming data for the HMD
-            thisPtr->request_start_hmd_stream(trackedHmdId);
+            // Request the tracking shape so that we know how many LEDs we are looking for
+            thisPtr->request_hmd_tracking_shape(trackedHmdId);
         }
         else
         {
@@ -1514,13 +1717,63 @@ void AppStage_HMDModelCalibration::handle_hmd_list_response(
     }
 }
 
+void AppStage_HMDModelCalibration::request_hmd_tracking_shape(PSMHmdID HmdID)
+{
+    if (m_menuState != AppStage_HMDModelCalibration::pendingHmdShapeRequest)
+    {
+        m_menuState = AppStage_HMDModelCalibration::pendingHmdShapeRequest;
+
+        PSMRequestID requestId;
+        PSM_GetHmdTrackingShapeAsync(HmdID, &requestId);
+        PSM_RegisterCallback(requestId, AppStage_HMDModelCalibration::handle_hmd_tracking_shape_response, this);
+    }
+}
+
+void AppStage_HMDModelCalibration::handle_hmd_tracking_shape_response(
+    const PSMResponseMessage *response_message,
+    void *userdata)
+{
+    const PSMoveProtocol::Response *response = GET_PSMOVEPROTOCOL_RESPONSE(response_message->opaque_response_handle);
+    const PSMoveProtocol::Request *request = GET_PSMOVEPROTOCOL_REQUEST(response_message->opaque_request_handle);
+
+    AppStage_HMDModelCalibration *thisPtr = static_cast<AppStage_HMDModelCalibration *>(userdata);
+
+    const PSMResult ResultCode = response_message->result_code;
+
+    switch (ResultCode)
+    {
+    case PSMResult_Success:
+    {
+        assert(response_message->payload_type == PSMResponseMessage::_responsePayloadType_HmdTrackingShape);
+        const PSMTrackingShape *hmd_tracking_shape = &response_message->payload.hmd_tracking_shape;
+
+        if (hmd_tracking_shape->shape_type == PSMTrackingShape_PointCloud)
+        {
+            // Create a model for the HMD that corresponds to the tracking geometry we are looking for
+            assert(thisPtr->m_hmdModelState == nullptr);
+            thisPtr->m_hmdModelState = new HMDModelState(hmd_tracking_shape);
+
+            // Start streaming data for the HMD
+            thisPtr->request_start_hmd_stream(thisPtr->m_hmdView->HmdID);
+        }
+        else
+        {
+            // we only work with point cloud calibration
+            thisPtr->setState(AppStage_HMDModelCalibration::failedHmdShapeRequest);
+        }
+    } break;
+
+    case PSMResult_Error:
+    case PSMResult_Canceled:
+    case PSMResult_Timeout:
+        {
+            thisPtr->setState(AppStage_HMDModelCalibration::failedHmdListRequest);
+        } break;
+    }
+}
+
 void AppStage_HMDModelCalibration::request_start_hmd_stream(int HmdID)
 {
-    // Allocate a hmd view to track HMD state
-    assert(m_hmdView == nullptr);
-    PSM_AllocateHmdListener(HmdID);
-    m_hmdView = PSM_GetHmd(HmdID);
-
     // Start receiving data from the controller
     setState(AppStage_HMDModelCalibration::pendingHmdStartRequest);
 
@@ -1703,14 +1956,7 @@ void AppStage_HMDModelCalibration::request_set_hmd_led_model_calibration()
 
 void AppStage_HMDModelCalibration::handle_all_devices_ready()
 {
-    if (!m_bBypassCalibration)
-    {
-        setState(eMenuState::verifyTrackers);
-    }
-    else
-    {
-        setState(eMenuState::test);
-    }
+    setState(eMenuState::verifyTrackers);
 }
 
 //-- private methods -----
@@ -1750,12 +1996,17 @@ static PSMVector2f projectTrackerRelativePositionOnTracker(
     return screenLocation;
 }
 
-static void drawHMD(PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform)
+static void drawHMD(const PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform)
 {
     switch (hmdView->HmdType)
     {
     case PSMHmd_Morpheus:
         drawMorpheusModel(transform);
+        break;
+    case PSMHmd_Virtual:
+        const glm::mat4 offset_transform = glm::translate(transform, glm::vec3(0.f, 0.f, 10.f));
+        drawMorpheusModel(offset_transform);
+        //drawVirtualHMDModel(transform, glm::vec3(0.f, 0.f, 1.f));
         break;
     }
 }
