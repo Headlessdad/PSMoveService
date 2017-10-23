@@ -618,7 +618,9 @@ void drawFullscreenTexture(const unsigned int texture_id)
     glPopMatrix();
 }
 
-void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsigned int right_texture_id)
+void drawFullscreenStereoTexture(
+    const unsigned int left_texture_id, const unsigned int right_texture_id,
+    const float top_y, const float bottom_y)
 {
     // Save a backup of the projection matrix and replace with the identity matrix
     glMatrixMode(GL_PROJECTION);
@@ -639,10 +641,10 @@ void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsig
     // Fill the left half of the screen with the left texture
     glColor3f(1.f, 1.f, 1.f);
     glBegin(GL_QUADS);
-        glTexCoord2f(0.f, 1.f); glVertex2f(-1.f, -0.5f);
-        glTexCoord2f(1.f, 1.f); glVertex2f(0.f, -0.5f);
-        glTexCoord2f(1.f, 0.f); glVertex2f(0.f, 0.5f);
-        glTexCoord2f(0.f, 0.f); glVertex2f(-1.f, 0.5f);
+        glTexCoord2f(0.f, 1.f); glVertex2f(-1.f, bottom_y);
+        glTexCoord2f(1.f, 1.f); glVertex2f(0.f, bottom_y);
+        glTexCoord2f(1.f, 0.f); glVertex2f(0.f, top_y);
+        glTexCoord2f(0.f, 0.f); glVertex2f(-1.f, top_y);
     glEnd();
 
     // Bind the right texture to draw
@@ -651,10 +653,10 @@ void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsig
     // Fill the right half of the screen with the right texture
     glColor3f(1.f, 1.f, 1.f);
     glBegin(GL_QUADS);
-        glTexCoord2f(0.f, 1.f); glVertex2f(0.f, -0.5f);
-        glTexCoord2f(1.f, 1.f); glVertex2f(1.f, -0.5f);
-        glTexCoord2f(1.f, 0.f); glVertex2f(1.f, 0.5f);
-        glTexCoord2f(0.f, 0.f); glVertex2f(0.f, 0.5f);
+        glTexCoord2f(0.f, 1.f); glVertex2f(0.f, bottom_y);
+        glTexCoord2f(1.f, 1.f); glVertex2f(1.f, bottom_y);
+        glTexCoord2f(1.f, 0.f); glVertex2f(1.f, top_y);
+        glTexCoord2f(0.f, 0.f); glVertex2f(0.f, top_y);
     glEnd();
 
     // rebind the default texture

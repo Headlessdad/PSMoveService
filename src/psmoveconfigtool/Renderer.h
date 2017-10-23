@@ -94,7 +94,9 @@ void drawTextAtWorldPosition(const glm::mat4 &transform, const glm::vec3 &positi
 void drawTextAtScreenPosition(const glm::vec3 &screenCoords, const char *format, ...) RENDERER_PRINTFARGS(2);
 void drawZeroTerminatedTextAtScreenPosition(const glm::vec3 &screenCoords, const char *text);
 void drawFullscreenTexture(const unsigned int texture_id);
-void drawFullscreenStereoTexture(const unsigned int left_texture_id, const unsigned int right_texture_id);
+void drawFullscreenStereoTexture(
+    const unsigned int left_texture_id, const unsigned int right_texture_id,
+    const float top_y= 0.5f, const float bottom_y= -0.5f);
 void drawPointCloudProjection(
     const float trackerWidth, const float trackerHeight,
     const glm::vec3 &color,
