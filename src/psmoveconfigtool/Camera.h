@@ -23,8 +23,10 @@ public:
         , m_cameraOrbitYawDegrees(0.f)
         , m_cameraOrbitPitchDegrees(0.f)
         , m_cameraOrbitRadius(100.f)
+        , m_cameraTarget(0.f, 0.f, 0.f)
         , m_cameraPosition(0.f, 0.f, 100.f)
-        , m_isPanningOrbitCamera(false)
+        , m_isRotatingOrbitCamera(false)
+        , m_isTranslatingOrbitCamera(false)
         , m_isLocked(false)
     { }
 
@@ -34,10 +36,11 @@ public:
     void onMouseWheel(int scrollAmount);
 
     void setIsLocked(bool locked);	
-    void setCameraOrbitLocation(float yawDegrees, float pitchDegrees, float radius);
+    void setCameraOrbitAngles(float yawDegrees, float pitchDegrees, float radius);
 	void setCameraOrbitYaw(float yawDegrees);
 	void setCameraOrbitPitch(float pitchDegrees);
     void setCameraOrbitRadius(float radius);
+    void setCameraViewTarget(const glm::vec3 &cameraTarget);
     void resetOrientation();
     void reset();
     void publishCameraViewMatrix();
@@ -47,8 +50,10 @@ private:
     float m_cameraOrbitYawDegrees;
     float m_cameraOrbitPitchDegrees;
     float m_cameraOrbitRadius;
+    glm::vec3 m_cameraTarget;
     glm::vec3 m_cameraPosition;
-    bool m_isPanningOrbitCamera;
+    bool m_isRotatingOrbitCamera;
+    bool m_isTranslatingOrbitCamera;
     bool m_isLocked;
 };
 
