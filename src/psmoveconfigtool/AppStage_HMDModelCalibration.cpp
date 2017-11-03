@@ -14,13 +14,12 @@
 #include "PSMoveProtocolInterface.h"
 #include "PSMoveProtocol.pb.h"
 #include "SharedTrackerState.h"
+#include "Logger.h"
 #include "MathGLM.h"
 #include "MathEigen.h"
 
 #include "SDL_keycode.h"
 #include "SDL_opengl.h"
-
-#include "ICP.h"
 
 #include "PSMoveClient_CAPI.h"
 
@@ -31,9 +30,9 @@
 #include <set>
 
 //-- typedefs ----
-namespace SICP
+namespace Eigen
 {
-    typedef Eigen::Matrix<double, 3, Eigen::Dynamic> Vertices;
+    typedef Matrix<double, 3, Eigen::Dynamic> Vector3dMatrix;
 };
 
 namespace cv
@@ -54,7 +53,7 @@ static float k_cosine_aligned_camera_angle = cosf(60.f *k_degrees_to_radians);
 static const float k_default_epipolar_correspondance_tolerance_px = 1.0f;
 
 static const float k_led_bucket_snap_distance = 3.0f; // cm
-static const double k_max_allowed_icp_alignment_error_cm= 5.0;// cm
+static const double k_max_allowed_icp_alignment_error= 10.0;
 
 static const glm::vec3 k_psmove_frustum_color = glm::vec3(0.1f, 0.7f, 0.3f);
 static const glm::vec3 k_psmove_frustum_color_no_track = glm::vec3(1.0f, 0.f, 0.f);
@@ -64,9 +63,65 @@ static PSMVector2f projectTrackerRelativePositionOnTracker(
     const PSMVector3f &trackerRelativePosition,
     const PSMMatrix3d &camera_matrix,
     const PSMDistortionCoefficients &distortion_coefficients);
-static void drawHMD(const PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform);
+static void drawHMD(const PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform, const glm::vec3 &color);
 
 //-- private structures -----
+namespace RigidMotionEstimator
+{
+    template <typename Derived1, typename Derived2, typename Derived3>
+    Eigen::Affine3d point_to_point(
+        Eigen::MatrixBase<Derived1>& X, /// Source (one 3D point per column)
+        Eigen::MatrixBase<Derived2>& Y, /// Target (one 3D point per column)
+        const Eigen::MatrixBase<Derived3>& w) /// Confidence weights
+    {
+        // Normalize weight vector
+        Eigen::VectorXd w_normalized = w/w.sum();
+
+        // De-mean
+        Eigen::Vector3d X_mean, Y_mean;
+        for(int i=0; i<3; ++i) {
+            X_mean(i) = (X.row(i).array()*w_normalized.transpose().array()).sum();
+            Y_mean(i) = (Y.row(i).array()*w_normalized.transpose().array()).sum();
+        }
+        X.colwise() -= X_mean;
+        Y.colwise() -= Y_mean;
+
+        // Compute transformation
+        Eigen::Affine3d transformation;
+        Eigen::Matrix3d sigma = X * w_normalized.asDiagonal() * Y.transpose();
+        Eigen::JacobiSVD<Eigen::Matrix3d> svd(sigma, Eigen::ComputeFullU | Eigen::ComputeFullV);
+
+        if(svd.matrixU().determinant()*svd.matrixV().determinant() < 0.0)
+        {
+            Eigen::Vector3d S = Eigen::Vector3d::Ones(); S(2) = -1.0;
+            transformation.linear().noalias() = svd.matrixV()*S.asDiagonal()*svd.matrixU().transpose();
+        }
+        else 
+        {
+            transformation.linear().noalias() = svd.matrixV()*svd.matrixU().transpose();
+        }
+        transformation.translation().noalias() = Y_mean - transformation.linear()*X_mean;
+
+        // Apply transformation
+        X = transformation*X;
+
+        // Re-apply mean
+        X.colwise() += X_mean;
+        Y.colwise() += Y_mean;
+
+        /// Return transformation
+        return transformation;
+    }
+    
+    template <typename Derived1, typename Derived2>
+    inline Eigen::Affine3d point_to_point(
+        Eigen::MatrixBase<Derived1>& X, // Source (one 3D point per column)
+        Eigen::MatrixBase<Derived2>& Y) // Target (one 3D point per column)
+    {
+        return point_to_point(X, Y, Eigen::VectorXd::Ones(X.cols()));
+    }
+}
+
 struct StereoCameraSectionState
 {
     // Raw video buffer
@@ -300,7 +355,7 @@ public:
         , m_seenLEDCount(0)
         , m_totalLEDSampleCount(0)
         , m_ledSampleSet(nullptr)
-        , m_bIsIcpTransformValid(false)
+        , m_bIsModelToSourceTransformValid(false)
     {
         const int model_point_count= hmd_tracking_shape->shape.pointcloud.point_count;
 
@@ -309,7 +364,7 @@ public:
 
         m_expectedLEDCount= hmd_tracking_shape->shape.pointcloud.point_count;
         m_ledSampleSet= new LEDModelSamples[hmd_tracking_shape->shape.pointcloud.point_count];
-        m_icpModelToSourceTransform = Eigen::Affine3d::Identity();
+        m_modelToSourceTransform = Eigen::Affine3d::Identity();
 
         for (int led_index = 0; led_index < m_expectedLEDCount; ++led_index)
         {
@@ -323,7 +378,7 @@ public:
 
             m_modelVertices[source_index]= Eigen::Vector3f(point.x, point.y, point.z);
         }
-        computeAllPossibleTriangleTransformsForPointCloud(m_modelVertices, m_modelTriangleBasisList);
+        computeAllPossibleTriangleTransformsForPointCloud(m_modelVertices, m_modelTriangleIndices, m_modelTriangleBasisList);
 
         m_icpModelVertices.resize(Eigen::NoChange, hmd_tracking_shape->shape.pointcloud.point_count);
         for (int source_index = 0; source_index < hmd_tracking_shape->shape.pointcloud.point_count; ++source_index)
@@ -334,15 +389,10 @@ public:
             m_icpModelVertices(1, source_index) = point.y;
             m_icpModelVertices(2, source_index) = point.z;
         }
-
-        m_icpModelKDTree= new nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple>(m_icpModelVertices);
     }
 
     ~HMDModelState()
     {
-        if (m_icpModelKDTree)
-            delete m_icpModelKDTree;
-
         delete[] m_ledSampleSet;
     }
 
@@ -363,16 +413,17 @@ public:
 
     bool getHmdTransform(glm::mat4 &out_hmd_transform)
     {
-        if (m_bIsIcpTransformValid)
+        if (m_bIsModelToSourceTransformValid)
         {
-            out_hmd_transform= eigen_matrix4f_to_glm_mat4(m_icpModelToSourceTransform.cast<float>().matrix());
+            out_hmd_transform= eigen_matrix4f_to_glm_mat4(m_modelToSourceTransform.cast<float>().matrix());
         }
 
-        return m_bIsIcpTransformValid;
+        return m_bIsModelToSourceTransformValid;
     }
 
     void recordSamples(PSMHeadMountedDisplay *hmd_view, StereoCameraState *stereo_camera_state)
     {
+        #if 0
         if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastTriangulatedPoints))
         {
             const int source_point_count = static_cast<int>(m_lastTriangulatedPoints.size());
@@ -382,7 +433,7 @@ public:
                 if (m_seenLEDCount > 0)
                 {
                     // Copy the triangulated vertices into a 3xN matric the SICP algorithms can use
-                    SICP::Vertices icpSourceVertices;
+                    Eigen::Vector3dMatrix icpSourceVertices;
                     icpSourceVertices.resize(Eigen::NoChange, source_point_count);
                     for (int source_index = 0; source_index < source_point_count; ++source_index)
                     {
@@ -394,7 +445,7 @@ public:
                     }
 
                     // Build kd-tree of the current set of target vertices
-                    nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple> kdtree(m_icpModelVertices);
+                    nanoflann::KDTreeAdaptor<Eigen::Vector3dMatrix, 3, nanoflann::metric_L2_Simple> kdtree(m_icpModelVertices);
 
                     // Attempt to align the new triangulated points with the previously found LED locations
                     // using the ICP algorithm
@@ -447,6 +498,7 @@ public:
             // where N is the expected tracking light count from HMD properties
             */
         }
+        #endif
     }
 
     void updateHmdTransform(PSMHeadMountedDisplay *hmd_view, StereoCameraState *stereo_camera_state)
@@ -454,15 +506,7 @@ public:
         // Use stereo camera projections to triangulate the tracking LED positions
         if (triangulateHMDProjections(hmd_view, stereo_camera_state, m_lastTriangulatedPoints))
         {
-            if (m_lastTriangulatedPoints.size() >= 3)
-            {
-                // First see if we can iterative improve the HMD pose using last frames pose...
-                if (!updateHmdTransformUsingICP())
-                {
-                    // .. Otherwise fall back to trying to brute force find the best pose
-                    updateHmdTransformUsingTriangleCorrelation();
-                }
-            }
+            computeHmdTransformUsingTriangleCorrelation();
         }
     }
 
@@ -563,16 +607,16 @@ public:
         const int correlated_point_count = static_cast<int>(m_lastTriangulatedPoints.size());
         if (correlated_point_count > 0)
         {
-            PSMVector3f triangulated_points[k_max_projection_points];
+            PSMVector3f source_points[k_max_projection_points];
 
             for (int point_index = 0; point_index < correlated_point_count; ++point_index)
             {
                 const CorrelatedPixelPair &pair= m_lastTriangulatedPoints[point_index];
             
-                triangulated_points[point_index]= eigen_vector3f_to_psm_vector3f(pair.triangulated_point_cm);
+                source_points[point_index]= eigen_vector3f_to_psm_vector3f(pair.triangulated_point_cm);
             }
 
-            drawPointCloud(glm::mat4(1.f), glm::vec3(1.f, 1.f, 0.f), (float *)triangulated_points, correlated_point_count);
+            drawPointCloud(glm::mat4(1.f), glm::vec3(1.f, 1.f, 0.f), (float *)source_points, correlated_point_count);
         }
 
         // Draw the frustum for each tracking camera.
@@ -614,8 +658,7 @@ public:
         glm::mat4 glm_hmd_transform;
         if (getHmdTransform(glm_hmd_transform))
         {
-            // Draw the model points at the HMD transform
-            const int model_point_count= m_icpModelVertices.cols();
+            const int model_point_count= (int)m_icpModelVertices.cols();
             PSMVector3f model_points[k_max_projection_points];
             for (int point_index = 0; point_index < model_point_count; ++point_index)
             {
@@ -623,15 +666,24 @@ public:
 
                 model_points[point_index]= eigen_vector3f_to_psm_vector3f(model_point);
             }
+
+            // Draw the model points at the HMD transform
             drawPointCloud(glm_hmd_transform, glm::vec3(1.f, 0.f, 0.f), (float *)model_points, model_point_count);
 
-            // Draw the Morpheus model
-            drawHMD(hmdView, glm_hmd_transform);
+            drawHMD(hmdView, glm_hmd_transform, glm::vec3(1.f, 1.f, 1.f));
+
             drawTransformedAxes(glm_hmd_transform, 10.f);
         }
     }
 
 protected:
+    enum eAlignmentResultType
+    {
+        _alignment_result_none,
+        _alignment_result_icp,
+        _alignment_result_triangle_correlation,
+    };
+
     struct CorrelatedPixelPair
     {
         PSMVector2f left_pixel;
@@ -1032,16 +1084,16 @@ protected:
 
     bool computeAllPossibleTriangleTransformsForPointCloud(
         const std::vector<Eigen::Vector3f> &points,
+        std::vector<int> &out_triangle_indices,
         std::vector<Eigen::Affine3f> &out_triangle_basis_list)
     {
         const int point_count= static_cast<int>(points.size());
 
         out_triangle_basis_list.clear();
+        out_triangle_indices.clear();
 
         if (point_count < 3)
             return false;
-
-        const Eigen::Vector3f cloud_centroid= computeCentroid3d(points);
 
         for (int p0_index = 0; p0_index < point_count; ++p0_index)
         {
@@ -1049,40 +1101,66 @@ protected:
             {
                 for (int p2_index = p1_index + 1; p2_index < point_count; ++p2_index)
                 {
-                    // Compute the transform of the triangle
-                    const Eigen::Vector3f &p0= points[p0_index];
-                    const Eigen::Vector3f &p1= points[p1_index];
-                    const Eigen::Vector3f &p2= points[p2_index];
-                    const Eigen::Vector3f tri_centroid= (p0+p1+p2) / 3.f;
-
-                    const Eigen::Vector3f forward_reference= 
-                        (point_count > 3) 
-                        ? tri_centroid - cloud_centroid
-                        : Eigen::Vector3f(0.f, 0.f, -1.f);
-
-                    Eigen::Vector3f forward= ((p1-p0).cross(p2-p0)).normalized();
-                    if (forward.dot(forward_reference) < 0)
-                        forward = -forward;
-
-                    const Eigen::Vector3f side= (forward.cross(Eigen::Vector3f(0.f, 1.f, 0.f))).normalized();
-                    const Eigen::Vector3f up= (side.cross(forward)).normalized();
-
-                    Eigen::Transform<float, 3, Eigen::Isometry>::LinearMatrixType tri_orientation; 
-                    tri_orientation << side[0], up[0], -forward[0],
-                                       side[1], up[1], -forward[1],
-                                       side[2], up[2], -forward[2];
-
-                    Eigen::Affine3f tri_transform;
-                    tri_transform.linear()= tri_orientation;
-                    tri_transform.translation()= tri_centroid;
-
-                    // Add the triangle basis to the list
-                    out_triangle_basis_list.push_back(tri_transform);
+                    out_triangle_indices.push_back(p0_index);
+                    out_triangle_indices.push_back(p1_index);
+                    out_triangle_indices.push_back(p2_index);
                 }
             }
         }
 
+        computeTriangleTransformsForTriangles(out_triangle_indices, points, out_triangle_basis_list);
+
         return true;
+    }
+
+    void computeTriangleTransformsForTriangles(
+        const std::vector<int> &indices,
+        const std::vector<Eigen::Vector3f> &points,
+        std::vector<Eigen::Affine3f> &out_triangle_basis_list)
+    {
+        const int index_count= static_cast<int>(indices.size());
+        const int point_count= static_cast<int>(points.size());
+
+        const Eigen::Vector3f cloud_centroid= computeCentroid3d(points);
+
+        out_triangle_basis_list.clear();
+
+        for (int index = 0; index < index_count; index+=3)
+        {
+            int p0_index= indices[index];
+            int p1_index= indices[index+1];
+            int p2_index= indices[index+2];
+
+            // Compute the transform of the triangle
+            const Eigen::Vector3f &p0= points[p0_index];
+            const Eigen::Vector3f &p1= points[p1_index];
+            const Eigen::Vector3f &p2= points[p2_index];
+            const Eigen::Vector3f tri_centroid= (p0+p1+p2) / 3.f;
+
+            const Eigen::Vector3f forward_reference= 
+                (point_count > 3) 
+                ? tri_centroid - cloud_centroid
+                : Eigen::Vector3f(0.f, 0.f, -1.f);
+
+            Eigen::Vector3f forward= ((p1-p0).cross(p2-p0)).normalized();
+            if (forward.dot(forward_reference) < 0)
+                forward = -forward;
+
+            const Eigen::Vector3f side= (forward.cross(Eigen::Vector3f(0.f, 1.f, 0.f))).normalized();
+            const Eigen::Vector3f up= (side.cross(forward)).normalized();
+
+            Eigen::Transform<float, 3, Eigen::Isometry>::LinearMatrixType tri_orientation; 
+            tri_orientation << side[0], up[0], -forward[0],
+                                side[1], up[1], -forward[1],
+                                side[2], up[2], -forward[2];
+
+            Eigen::Affine3f tri_transform;
+            tri_transform.linear()= tri_orientation;
+            tri_transform.translation()= tri_centroid;
+
+            // Add the triangle basis to the list
+            out_triangle_basis_list.push_back(tri_transform);
+        }
     }
 
     int align3dPointCloudsUsingCorrelation(
@@ -1202,18 +1280,27 @@ protected:
 
     int findBest3DPointCloudCorrelation(
         const std::vector<Eigen::Vector3f> &source_points,
-        std::vector<int> &best_source_to_model_point_correspondence)
+        std::vector<int> &best_source_to_model_point_correspondence,
+        float *out_best_correlation_error)
     {
         bool found_correlation= false;
         float best_correlation_error= k_real_max;
         int best_match_count= 0;
 
-        if (computeAllPossibleTriangleTransformsForPointCloud(source_points, m_sourceTriangleBasisList))
+        if (computeAllPossibleTriangleTransformsForPointCloud(
+                source_points, m_sourceTriangleIndices, m_sourceTriangleBasisList))
         {
-            for (const Eigen::Affine3f &souce_basis : m_sourceTriangleBasisList)
+            for (int source_triangle_index= 0; 
+                source_triangle_index < m_sourceTriangleBasisList.size();
+                ++source_triangle_index)
             {
-                for (const Eigen::Affine3f &model_basis : m_modelTriangleBasisList)
+                const Eigen::Affine3f &souce_basis= m_sourceTriangleBasisList[source_triangle_index];
+
+                for (int model_triangle_index= 0; 
+                    model_triangle_index < m_modelTriangleBasisList.size(); 
+                    ++model_triangle_index)
                 {
+                    const Eigen::Affine3f &model_basis= m_modelTriangleBasisList[model_triangle_index];
                     std::vector<int> testLeftToRightPointCorrespondence;
                     float correlationError= 0.f;
 
@@ -1236,135 +1323,141 @@ protected:
             }
         }
 
+        if (out_best_correlation_error)
+        {
+            *out_best_correlation_error= best_correlation_error;
+        }
+
         return best_match_count;
     }
 
-    bool updateHmdTransformUsingICP()
-    {
-        // Don't bother trying to use iterative closest point unless we 
-        // have a valid transform from previous frame
-        if (!m_bIsIcpTransformValid)
-            return false;
-
-        const int source_point_count = static_cast<int>(m_lastTriangulatedPoints.size());
-        assert(source_point_count >= 3);
-
-        // Copy the triangulated vertices into a 3xN matrix the SICP algorithms can use
-        SICP::Vertices icp_source_points, icp_model_aligned_source_points;
-        icp_source_points.resize(Eigen::NoChange, source_point_count);
-        icp_model_aligned_source_points.resize(Eigen::NoChange, source_point_count);
-        for (int source_point_index = 0; source_point_index < source_point_count; ++source_point_index)
-        {
-            const Eigen::Vector3f &point = m_lastTriangulatedPoints[source_point_index].triangulated_point_cm;
-
-            icp_source_points(0, source_point_index) = point.x();
-            icp_source_points(1, source_point_index) = point.y();
-            icp_source_points(2, source_point_index) = point.z();
-            icp_model_aligned_source_points(0, source_point_index) = point.x();
-            icp_model_aligned_source_points(1, source_point_index) = point.y();
-            icp_model_aligned_source_points(2, source_point_index) = point.z();
-        }
-
-        // Use the previous frame's HMD transform as a starting point for model alignment
-        {
-            const Eigen::Affine3d sourceToModelTransform= m_icpModelToSourceTransform.inverse();
-
-            icp_model_aligned_source_points= sourceToModelTransform * icp_source_points;
-        }
-
-        // Attempt to align the new triangulated points with the Model
-        // using the Iterative Closest Point algorithm
-        SICP::Parameters params;
-        params.p = .5;
-        params.max_icp = 15;
-        params.print_icpn = false;
-        SICP::point_to_point(icp_model_aligned_source_points, m_icpModelVertices, params);
-
-        // Find the closest vertices on the model to aligned source vertices
-        SICP::Vertices icp_corresponding_model_point;
-        icp_corresponding_model_point.resize(Eigen::NoChange, source_point_count);
-        for (int source_point_index = 0; source_point_index < source_point_count; ++source_point_index)
-        {
-            const Eigen::Vector3d model_aligned_source_vertex = 
-                icp_model_aligned_source_points.col(source_point_index);
-            const int corresponding_model_point_index = 
-                m_icpModelKDTree->closest(model_aligned_source_vertex.data());
-
-            icp_corresponding_model_point.col(source_point_index)=
-                m_icpModelVertices.col(corresponding_model_point_index);
-        }
-
-        // Compute the rigid transform from model vertices to source vertices
-        // NOTE: This modifies icp_corresponding_model_point to align with icp_source_points
-        m_icpModelToSourceTransform= 
-            RigidMotionEstimator::point_to_point(icp_corresponding_model_point, icp_source_points);
-
-        // Compute the average alignment error per point
-        double max_alignment_error= 0.0;
-        for (int source_point_index = 0; source_point_index < source_point_count; ++source_point_index)
-        {
-            Eigen::Vector3d source_point= icp_source_points.col(source_point_index);
-            Eigen::Vector3d corresponding_model_point= icp_corresponding_model_point.col(source_point_index);
-
-            max_alignment_error= std::max(max_alignment_error, (source_point - corresponding_model_point).norm());
-        }
-
-        return max_alignment_error < k_max_allowed_icp_alignment_error_cm;
-    }
-
-    void updateHmdTransformUsingTriangleCorrelation()
+    void computeHmdTransformUsingTriangleCorrelation()
     {
         const int source_point_count = static_cast<int>(m_lastTriangulatedPoints.size());
-        assert(source_point_count >= 3);
 
         // Extract the source points into an array
-        std::vector<Eigen::Vector3f> source_vertices;
+        m_sourceVertices.clear();
         std::for_each(m_lastTriangulatedPoints.begin(), m_lastTriangulatedPoints.end(),
-            [&source_vertices](const CorrelatedPixelPair &correlated_pixel_pair){
-                source_vertices.push_back(correlated_pixel_pair.triangulated_point_cm);
+            [this](const CorrelatedPixelPair &correlated_pixel_pair){
+                m_sourceVertices.push_back(correlated_pixel_pair.triangulated_point_cm);
             });
 
-        // Brute force search for best triangle on the source point cloud
-        // to align with a triangle on the model point cloud
+        // Find the best correspondence from source point to model point
         std::vector<int> best_source_to_model_point_correspondence;
-        int point_match_count= 
-            findBest3DPointCloudCorrelation(
-                source_vertices, 
-                best_source_to_model_point_correspondence);
-        if (point_match_count >= 3)
+        int point_match_count= 0;
         {
-            // Copy the source points into a 3xN matrix the SICP algorithms can use
-            int write_col_index= 0;
-            SICP::Vertices icp_source_vertices;
-            SICP::Vertices icp_corresponding_model_vertices;
-            icp_source_vertices.resize(Eigen::NoChange, point_match_count);
-            icp_corresponding_model_vertices.resize(Eigen::NoChange, point_match_count);
-            for (int source_point_index = 0; source_point_index < source_point_count; ++source_point_index)
+            float align_matching_error= k_real_max;
+
+            if (m_bIsModelToSourceTransformValid)
             {
-                // Find the closest vertices on the model to aligned source vertices
-                const int corresponding_model_point_index = 
-                    best_source_to_model_point_correspondence[source_point_index];
+                // Use the most recent transform to find a correspondence
+                point_match_count= align3dPointCloudsUsingCorrelation(
+                    m_sourceVertices,
+                    m_modelToSourceTransform.cast<float>(), 
+                    Eigen::Affine3f::Identity(),
+                    best_source_to_model_point_correspondence,
+                    align_matching_error);
+            }
 
-                if (corresponding_model_point_index != -1)
+            if (source_point_count >= 3 && align_matching_error > k_max_allowed_icp_alignment_error)
+            {
+                std::vector<int> alt_best_source_to_model_point_correspondence;
+                float alt_align_matching_error;
+
+                // Brute force search for best triangle on the source point cloud
+                // to align with a triangle on the model point cloud
+                int alt_point_match_count=
+                    findBest3DPointCloudCorrelation(
+                        m_sourceVertices, 
+                        alt_best_source_to_model_point_correspondence,
+                        &alt_align_matching_error);
+
+                if (alt_point_match_count >= point_match_count &&
+                    alt_align_matching_error < align_matching_error)
                 {
-                    const Eigen::Vector3f &point = 
-                        m_lastTriangulatedPoints[source_point_index].triangulated_point_cm;
+                    point_match_count= alt_point_match_count;
+                    best_source_to_model_point_correspondence= alt_best_source_to_model_point_correspondence;
+                    align_matching_error= alt_align_matching_error;
+                }
+            }
+        }
 
-                    icp_source_vertices(0, write_col_index) = point.x();
-                    icp_source_vertices(1, write_col_index) = point.y();
-                    icp_source_vertices(2, write_col_index) = point.z();
+        // Copy the source vertices and their corresponding model vertices into parallel arrays
+        if (point_match_count > 0)
+        {
+            Eigen::Vector3dMatrix icp_source_vertices;
+            Eigen::Vector3dMatrix icp_corresponding_model_vertices;
+            {
+                int write_col_index= 0;
 
-                    icp_corresponding_model_vertices.col(write_col_index)=
-                        m_icpModelVertices.col(corresponding_model_point_index);
+                icp_source_vertices.resize(Eigen::NoChange, point_match_count);
+                icp_corresponding_model_vertices.resize(Eigen::NoChange, point_match_count);
 
-                    ++write_col_index;
+                for (int source_point_index = 0; source_point_index < source_point_count; ++source_point_index)
+                {
+                    // Find the closest vertices on the model to aligned source vertices
+                    const int corresponding_model_point_index = 
+                        best_source_to_model_point_correspondence[source_point_index];
+
+                    if (corresponding_model_point_index != -1)
+                    {
+                        const Eigen::Vector3f &point = 
+                            m_lastTriangulatedPoints[source_point_index].triangulated_point_cm;
+
+                        icp_source_vertices(0, write_col_index) = point.x();
+                        icp_source_vertices(1, write_col_index) = point.y();
+                        icp_source_vertices(2, write_col_index) = point.z();
+
+                        icp_corresponding_model_vertices.col(write_col_index)=
+                            m_icpModelVertices.col(corresponding_model_point_index);
+
+                        ++write_col_index;
+                    }
                 }
             }
 
             // Compute the rigid transform from model vertices to source vertices
-            m_icpModelToSourceTransform= 
-                RigidMotionEstimator::point_to_point(icp_corresponding_model_vertices, icp_source_vertices);
-            m_bIsIcpTransformValid= true;
+            if (point_match_count >= 3)
+            {
+                m_modelToSourceTransform= 
+                    RigidMotionEstimator::point_to_point(
+                        icp_corresponding_model_vertices, icp_source_vertices);
+                m_bIsModelToSourceTransformValid= true;
+            }
+            else if (point_match_count == 2)
+            {
+                const Eigen::Vector3d source_center= 
+                    (icp_source_vertices.col(0) + icp_source_vertices.col(1))*0.5f;
+                const Eigen::Vector3d model_center= 
+                    (icp_corresponding_model_vertices.col(0) + icp_corresponding_model_vertices.col(1))*0.5f;
+                const Eigen::Vector3d translate_model_to_source= source_center - model_center;
+
+                const Eigen::Vector3d source_vector= 
+                    icp_source_vertices.col(1) - icp_source_vertices.col(0);
+                const Eigen::Vector3d model_vector= 
+                    icp_corresponding_model_vertices.col(1) - icp_corresponding_model_vertices.col(0);
+                const Eigen::Quaterniond rotate_model_to_source= Eigen::Quaterniond::FromTwoVectors(model_vector, source_vector);
+
+                m_modelToSourceTransform= Eigen::Affine3d::Identity();
+                m_modelToSourceTransform.translation()= translate_model_to_source;
+                m_modelToSourceTransform.linear()= rotate_model_to_source.toRotationMatrix();
+                m_bIsModelToSourceTransformValid= true;
+            }
+            else if (point_match_count == 1)
+            {
+                const Eigen::Vector3d source_center= icp_source_vertices.col(0);
+                const Eigen::Vector3d model_center= icp_corresponding_model_vertices.col(0);
+                const Eigen::Vector3d translate_model_to_source= source_center - model_center;
+
+                m_modelToSourceTransform= Eigen::Affine3d::Identity();
+                m_modelToSourceTransform.translation()= translate_model_to_source;
+                m_bIsModelToSourceTransformValid= true;
+            }
+        }
+        else
+        {
+            m_modelToSourceTransform= Eigen::Affine3d::Identity();
+            m_bIsModelToSourceTransformValid= false;
         }
     }
 
@@ -1378,14 +1471,17 @@ private:
 
     LEDModelSamples *m_ledSampleSet;
 
+    std::vector<Eigen::Vector3f> m_sourceVertices;
     std::vector<Eigen::Affine3f> m_sourceTriangleBasisList;
-    std::vector<Eigen::Affine3f> m_modelTriangleBasisList;
-    std::vector<Eigen::Vector3f> m_modelVertices;
+    std::vector<int> m_sourceTriangleIndices;
 
-    SICP::Vertices m_icpModelVertices;
-    nanoflann::KDTreeAdaptor<SICP::Vertices, 3, nanoflann::metric_L2_Simple> *m_icpModelKDTree;
-    Eigen::Affine3d m_icpModelToSourceTransform;
-    bool m_bIsIcpTransformValid;
+    Eigen::Vector3dMatrix m_icpModelVertices;
+    std::vector<Eigen::Vector3f> m_modelVertices;
+    std::vector<Eigen::Affine3f> m_modelTriangleBasisList;
+    std::vector<int> m_modelTriangleIndices;
+
+    Eigen::Affine3d m_modelToSourceTransform;
+    bool m_bIsModelToSourceTransformValid;
 };
 
 //-- public methods -----
@@ -2301,16 +2397,16 @@ static PSMVector2f projectTrackerRelativePositionOnTracker(
     return screenLocation;
 }
 
-static void drawHMD(const PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform)
+static void drawHMD(const PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform, const glm::vec3 &color)
 {
     switch (hmdView->HmdType)
     {
     case PSMHmd_Morpheus:
-        drawMorpheusModel(transform);
+        drawMorpheusModel(transform, color);
         break;
     case PSMHmd_Virtual:
         const glm::mat4 offset_transform = glm::translate(transform, glm::vec3(0.f, 0.f, 10.f));
-        drawMorpheusModel(offset_transform);
+        drawMorpheusModel(offset_transform, color);
         //drawVirtualHMDModel(transform, glm::vec3(0.f, 0.f, 1.f));
         break;
     }

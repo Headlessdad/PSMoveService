@@ -866,6 +866,72 @@ void drawTransformedTexturedCube(const glm::mat4 &transform, int textureId, floa
     glBindTexture(GL_TEXTURE_2D, 0); 
 }
 
+void drawWireframeTriangles(
+    const glm::mat4 &transform,
+    const float *vertices,
+    const int *indices,
+    const int triangle_count,
+    const glm::vec3 &color)
+{
+    assert(Renderer::getIsRenderingStage());
+  
+    glColor3fv(glm::value_ptr(color));
+
+    glPushMatrix();
+    glMultMatrixf(glm::value_ptr(transform));
+
+    glBegin(GL_LINES);
+
+    for (int index = 0; index < triangle_count * 3; index += 3)
+    {
+        const int i0= indices[index];
+        const int i1= indices[index+1];
+        const int i2= indices[index+2];
+        const glm::vec3 v0= *reinterpret_cast<const glm::vec3 *>(&vertices[i0*3]);
+        const glm::vec3 v1= *reinterpret_cast<const glm::vec3 *>(&vertices[i1*3]);
+        const glm::vec3 v2= *reinterpret_cast<const glm::vec3 *>(&vertices[i2*3]);
+
+        glVertex3fv(glm::value_ptr(v0)); glVertex3fv(glm::value_ptr(v1));
+        glVertex3fv(glm::value_ptr(v1)); glVertex3fv(glm::value_ptr(v2));
+        glVertex3fv(glm::value_ptr(v2)); glVertex3fv(glm::value_ptr(v0));
+    }
+
+    glEnd();
+
+    glPopMatrix();
+}
+
+void drawWireframeTriangle(
+    const glm::mat4 &transform,
+    const glm::vec3 &v0, 
+    const glm::vec3 &v1, 
+    const glm::vec3 &v2,
+    const glm::vec3 &color,
+    const float line_width)
+{
+    assert(Renderer::getIsRenderingStage());
+  
+    glColor3fv(glm::value_ptr(color));
+
+    glPushMatrix();
+    glMultMatrixf(glm::value_ptr(transform));
+
+    glLineWidth(line_width);
+
+    glBegin(GL_LINES);
+
+    glVertex3fv(glm::value_ptr(v0)); glVertex3fv(glm::value_ptr(v1));
+    glVertex3fv(glm::value_ptr(v1)); glVertex3fv(glm::value_ptr(v2));
+    glVertex3fv(glm::value_ptr(v2)); glVertex3fv(glm::value_ptr(v0));
+
+    glEnd();
+
+    glLineWidth(1.f);
+
+    glPopMatrix();
+}
+
+
 void drawTransformedFrustum(const glm::mat4 &transform, const PSMFrustum *frustum, const glm::vec3 &color)
 {
     assert(Renderer::getIsRenderingStage());
@@ -1467,7 +1533,7 @@ void drawTrackerList(const PSMClientTrackerInfo *trackerList, const int trackerC
 	}
 }
 
-void drawMorpheusModel(const glm::mat4 &transform)
+void drawMorpheusModel(const glm::mat4 &transform, const glm::vec3 &color)
 {
     assert(Renderer::getIsRenderingStage());
 
@@ -1481,7 +1547,7 @@ void drawMorpheusModel(const glm::mat4 &transform)
         glEnableClientState(GL_VERTEX_ARRAY);
         glEnableClientState(GL_TEXTURE_COORD_ARRAY);
         
-        glColor3f(1.f, 1.f, 1.f);
+        glColor3fv(glm::value_ptr(color));
         glVertexPointer(3, GL_FLOAT, 0, morpheusVerts);
         glTexCoordPointer(2, GL_FLOAT, 0, morpheusTexCoords);
         glDrawArrays(GL_TRIANGLES, 0, morpheusNumVerts);

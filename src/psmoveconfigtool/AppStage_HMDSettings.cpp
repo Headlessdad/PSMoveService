@@ -110,7 +110,7 @@ void AppStage_HMDSettings::render()
             case PSMoveProtocol::Morpheus:
                 {
                     glm::mat4 scale3 = glm::scale(glm::mat4(1.f), glm::vec3(2.f, 2.f, 2.f));
-                    drawMorpheusModel(scale3);
+                    drawMorpheusModel(scale3, glm::vec3(1.f, 1.f, 1.f));
                 } break;
             case PSMoveProtocol::VirtualHMD:
                 {

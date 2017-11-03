@@ -604,7 +604,7 @@ static void drawHMD(PSMHeadMountedDisplay *hmdView, const glm::mat4 &transform)
     switch(hmdView->HmdType)
     {
     case PSMHmd_Morpheus:
-        drawMorpheusModel(transform);
+        drawMorpheusModel(transform, glm::vec3(1.f, 1.f, 1.f));
         break;
     case PSMHmd_Virtual:
         drawVirtualHMDModel(transform, glm::vec3(1.f, 1.f, 1.f));

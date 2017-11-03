@@ -113,6 +113,8 @@ void drawTransformedBox(const glm::mat4 &transform, const glm::vec3 &half_extent
 void drawTransformedBox(const glm::mat4 &transform, const glm::vec3 &box_min, const glm::vec3 &box_max, const glm::vec3 &color);
 void drawTransformedTexturedCube(const glm::mat4 &transform, int textureId, float scale);
 void drawTransformedFrustum(const glm::mat4 &transform, const PSMFrustum *frustum, const glm::vec3 &color);
+void drawWireframeTriangles(const glm::mat4 &transform, const float *vertices, const int *indices, const int triangle_count, const glm::vec3 &color);
+void drawWireframeTriangle(const glm::mat4 &transform, const glm::vec3 &v0, const glm::vec3 &v1, const glm::vec3 &v2, const glm::vec3 &color, const float line_width);
 void drawPointCloud(const glm::mat4 &transform, const glm::vec3 &color, const float *points, const int point_count);
 void drawEllipsoid(
     const glm::mat4 &transform, const glm::vec3 &color, 
@@ -150,7 +152,7 @@ void drawPSDualShock4Model(const glm::mat4 &transform, const glm::vec3 &color);
 void drawVirtualControllerModel(const glm::mat4 &transform, const glm::vec3 &color);
 void drawPS3EyeModel(const glm::mat4 &transform);
 void drawTrackerList(const PSMClientTrackerInfo *trackerList, const int trackerCount);
-void drawMorpheusModel(const glm::mat4 &transform);
+void drawMorpheusModel(const glm::mat4 &transform, const glm::vec3 &color);
 void drawVirtualHMDModel(const glm::mat4 &transform, const glm::vec3 &color);
 
 //-- Utilities -----
