@@ -378,7 +378,11 @@ public:
 
             m_modelVertices[source_index]= Eigen::Vector3f(point.x, point.y, point.z);
         }
-        computeAllPossibleTriangleTransformsForPointCloud(m_modelVertices, m_modelTriangleIndices, m_modelTriangleBasisList);
+        computeAllVisibleTriangleTransformsForPointCloud(
+            m_modelVertices, 
+            Eigen::Vector3f(0.f, 0.f, 12.f),
+            m_modelTriangleIndices, 
+            m_modelTriangleBasisList);
 
         m_icpModelVertices.resize(Eigen::NoChange, hmd_tracking_shape->shape.pointcloud.point_count);
         for (int source_index = 0; source_index < hmd_tracking_shape->shape.pointcloud.point_count; ++source_index)
@@ -669,6 +673,12 @@ public:
 
             // Draw the model points at the HMD transform
             drawPointCloud(glm_hmd_transform, glm::vec3(1.f, 0.f, 0.f), (float *)model_points, model_point_count);
+            drawWireframeTriangles(
+                glm_hmd_transform, 
+                (const float *)m_modelVertices.data(), 
+                m_modelTriangleIndices.data(),
+                (int)m_modelTriangleIndices.size() / 3,
+                glm::vec3(1.f, 0.f, 0.f));
 
             drawHMD(hmdView, glm_hmd_transform, glm::vec3(1.f, 1.f, 1.f));
 
@@ -1080,6 +1090,50 @@ protected:
         }
 
         return center;
+    }
+
+    bool computeAllVisibleTriangleTransformsForPointCloud(
+        const std::vector<Eigen::Vector3f> &points,
+        const Eigen::Vector3f &center,
+        std::vector<int> &out_triangle_indices,
+        std::vector<Eigen::Affine3f> &out_triangle_basis_list)
+    {
+        const int point_count= static_cast<int>(points.size());
+
+        out_triangle_basis_list.clear();
+        out_triangle_indices.clear();
+
+        if (point_count < 3)
+            return false;
+
+        for (int p0_index = 0; p0_index < point_count; ++p0_index)
+        {
+            const Eigen::Vector3f &p0= points[p0_index];
+            const Eigen::Vector3f n0= p0 - center;
+
+            for (int p1_index = p0_index + 1; p1_index < point_count; ++p1_index)
+            {
+                const Eigen::Vector3f &p1= points[p1_index];
+                const Eigen::Vector3f n1= p1 - center;
+
+                for (int p2_index = p1_index + 1; p2_index < point_count; ++p2_index)
+                {
+                    const Eigen::Vector3f &p2= points[p2_index];
+                    const Eigen::Vector3f n2= p2 - center;
+
+                    if (n0.dot(n1) >= 0 && n0.dot(n2) >= 0)
+                    {
+                        out_triangle_indices.push_back(p0_index);
+                        out_triangle_indices.push_back(p1_index);
+                        out_triangle_indices.push_back(p2_index);
+                    }
+                }
+            }
+        }
+
+        computeTriangleTransformsForTriangles(out_triangle_indices, points, out_triangle_basis_list);
+
+        return true;
     }
 
     bool computeAllPossibleTriangleTransformsForPointCloud(
